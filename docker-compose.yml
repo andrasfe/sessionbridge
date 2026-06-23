@@ -1,14 +1,16 @@
 # SessionBridge — local deployment that mirrors the AWS isolation boundaries.
 #
 # Networks:
-#   edge      -> webapp <-> controlplane only.  Published to the host.
-#   internal  -> controlplane <-> runner/llm/artifacts. `internal: true` means
-#                NO route to/from the host. The runner publishes NO ports and
-#                lives only here, so the web app (and the host) literally cannot
-#                reach it. The control plane is the sole bridge.
-#
-# This is the docker-compose equivalent of: public ALB -> webapp/controlplane in
-# public subnets, runner/llm/artifacts in private subnets with no public inbound.
+#   edge     -> webapp <-> controlplane only. Webapp is the only published port.
+#   backend  -> controlplane <-> runner/llm/artifacts. The runner lives ONLY
+#               here and publishes NO ports, so the web app (on `edge`) cannot
+#               reach it and it isn't exposed to the host — the control plane is
+#               the sole bridge. The network is intentionally NOT `internal:
+#               true`: the runner still needs OUTBOUND internet to load
+#               t-mobile.com. That's exactly the AWS model — a private subnet
+#               with a NAT gateway: outbound allowed, public inbound denied
+#               (there, by no public IP + a security group that only admits the
+#               control plane).
 
 services:
   webapp:
@@ -26,7 +28,7 @@ services:
       RUNNER_URL: http://runner:8082
       LLM_URL: http://llm:8083
       ARTIFACT_URL: http://artifacts:8084
-    networks: [edge, internal]
+    networks: [edge, backend]
     depends_on: [runner, artifacts]
 
   runner:
@@ -36,7 +38,7 @@ services:
       LLM_URL: http://llm:8083
       HEADLESS: "true"
     # No `ports:` — unreachable from host and from the edge network.
-    networks: [internal]
+    networks: [backend]
     shm_size: "1gb"
     depends_on: [artifacts]
 
@@ -45,7 +47,7 @@ services:
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
-    networks: [internal]
+    networks: [backend]
 
   artifacts:
     build: { context: ., dockerfile: services/artifacts/Dockerfile }
@@ -56,12 +58,11 @@ services:
       METADATA_LOCAL_DIR: /data/metadata
     volumes:
       - artifacts-data:/data
-    networks: [internal]
+    networks: [backend]
 
 networks:
   edge:
-  internal:
-    internal: true
+  backend:
 
 volumes:
   artifacts-data:
