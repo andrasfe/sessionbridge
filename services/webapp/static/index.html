@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SessionBridge — T-Mobile Statement</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>SessionBridge</h1>
+    <p class="sub">Fetch your latest T-Mobile PDF statement through an isolated remote browser.</p>
+  </header>
+
+  <main>
+    <section class="controls">
+      <button id="start" disabled>Fetch latest T-Mobile statement</button>
+      <button id="continue" disabled>Continue after login</button>
+      <button id="stop" class="ghost" disabled>Stop</button>
+    </section>
+
+    <section id="statusBar" class="status">
+      <span id="state" class="pill">idle</span>
+      <span id="host" class="host"></span>
+      <span id="message"></span>
+    </section>
+
+    <section class="viewer-wrap">
+      <div id="loginNotice" class="notice hidden">
+        🔒 Login mode — automation paused, the LLM is disabled, and nothing you type is logged or stored.
+        Enter your credentials and complete any MFA, then click <b>Continue after login</b>.
+      </div>
+      <canvas id="viewer" width="1280" height="800" tabindex="0"></canvas>
+    </section>
+
+    <section id="result" class="result hidden">
+      <h2>Statement ready</h2>
+      <ul id="resultMeta"></ul>
+      <a id="download" class="button" href="#">Download PDF</a>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+:root { --mag: #e20074; --bg: #0f1115; --panel: #1a1d24; --txt: #e8eaed; --muted: #9aa0a6; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--txt); }
+header { padding: 20px 28px; border-bottom: 1px solid #262a33; }
+h1 { margin: 0; color: var(--mag); font-size: 22px; }
+.sub { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+main { max-width: 1320px; margin: 0 auto; padding: 20px 28px; }
+
+.controls { display: flex; gap: 12px; margin-bottom: 16px; }
+button, .button { background: var(--mag); color: #fff; border: 0; border-radius: 8px;
+  padding: 10px 16px; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-block; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.ghost { background: transparent; border: 1px solid #3a3f4b; color: var(--txt); }
+
+.status { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 14px; }
+.pill { background: #2a2f3a; padding: 4px 10px; border-radius: 999px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.pill.completed { background: #1f7a3d; }
+.pill.failed, .pill.stopped_by_user { background: #8a2b2b; }
+.pill.requires_user_intervention { background: #8a6a1f; }
+.host { color: var(--muted); }
+
+.viewer-wrap { position: relative; }
+.notice { background: #2a2410; border: 1px solid #6a5a1f; color: #f0d98a;
+  padding: 10px 14px; border-radius: 8px 8px 0 0; font-size: 13px; }
+#viewer { width: 100%; max-width: 1280px; aspect-ratio: 1280 / 800; background: #000;
+  border: 1px solid #262a33; border-radius: 0 0 8px 8px; display: block; outline: none; cursor: crosshair; }
+
+.result { margin-top: 20px; background: var(--panel); padding: 18px; border-radius: 10px; }
+.result h2 { margin: 0 0 10px; font-size: 16px; }
+.result ul { margin: 0 0 14px; padding-left: 18px; color: var(--muted); font-size: 14px; }
+.hidden { display: none; }

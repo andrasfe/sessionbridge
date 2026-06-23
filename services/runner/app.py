@@ -1,0 +1,175 @@
+"""Remote browser runner.
+
+The ONLY component with Playwright and an authenticated T-Mobile session. It has
+no public inbound access (enforced by network/infra); only the control plane
+reaches it. It streams frames, forwards input, enforces allowed domains, runs the
+deterministic connector, and destroys the session at job end.
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+
+import httpx
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+
+from shared.config import settings
+from shared.logging import log
+from shared import security
+from shared.schemas import (
+    AutomateResponse, StartSessionRequest, StartSessionResponse,
+)
+from shared.states import JobState
+
+from browser import BrowserSession
+from connectors import tmobile
+from connectors.tmobile import ConnectorUncertain
+
+app = FastAPI(title="sessionbridge-runner")
+
+# session_id -> dict(session, job_id, lease_token, lease_exp, input_enabled)
+SESSIONS: dict[str, dict] = {}
+
+
+def _lease_ok(rec: dict, token: str) -> bool:
+    return token == rec["lease_token"] and time.time() < rec["lease_exp"]
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
+
+@app.post("/sessions", response_model=StartSessionResponse)
+async def start_session(req: StartSessionRequest):
+    if not security.url_allowed(req.start_url):
+        raise HTTPException(400, "start_url not on an allowed domain")
+    session_id = f"sess_{req.job_id}"
+    sess = BrowserSession(req.job_id, req.start_url)
+    await sess.start()
+    await sess.start_screencast()
+    SESSIONS[session_id] = {
+        "session": sess,
+        "job_id": req.job_id,
+        "lease_token": req.lease_token,
+        "lease_exp": time.time() + settings.LEASE_TTL,
+        # Input forwarding is enabled during the login window.
+        "input_enabled": True,
+    }
+    log("runner", "session_started", job_id=req.job_id, session_id=session_id)
+    return StartSessionResponse(session_id=session_id)
+
+
+@app.websocket("/ws/{session_id}")
+async def ws_stream(ws: WebSocket, session_id: str):
+    rec = SESSIONS.get(session_id)
+    if not rec:
+        await ws.close(code=4404)
+        return
+    await ws.accept()
+    sess: BrowserSession = rec["session"]
+
+    async def pump_frames():
+        while True:
+            frame = await sess.frame_queue.get()
+            await ws.send_json(frame)
+
+    async def pump_input():
+        while True:
+            msg = await ws.receive_json()
+            if msg.get("type") != "input":
+                continue
+            # Input is forwarded but NEVER logged (no input logging, per spec).
+            if rec["input_enabled"]:
+                try:
+                    await sess.handle_input(msg["event"])
+                except Exception:
+                    pass
+
+    sender = asyncio.create_task(pump_frames())
+    receiver = asyncio.create_task(pump_input())
+    try:
+        await asyncio.gather(sender, receiver)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        sender.cancel()
+        receiver.cancel()
+
+
+@app.post("/sessions/{session_id}/automate", response_model=AutomateResponse)
+async def automate(session_id: str, lease_token: str):
+    rec = SESSIONS.get(session_id)
+    if not rec:
+        raise HTTPException(404, "no session")
+    if not _lease_ok(rec, lease_token):
+        raise HTTPException(403, "invalid or expired lease")
+
+    sess: BrowserSession = rec["session"]
+    # Login is complete; further user input is no longer accepted by automation.
+    rec["input_enabled"] = False
+    page = sess.page
+
+    # checking_domain
+    if not security.host_allowed(sess.current_host):
+        return AutomateResponse(
+            state=JobState.REQUIRES_USER_INTERVENTION,
+            message="Current page is not on an allowed T-Mobile domain.",
+            source_host=sess.current_host,
+        )
+
+    try:
+        await tmobile.navigate_to_billing(page)
+        result = await tmobile.find_and_download_latest(page)
+    except ConnectorUncertain as e:
+        log("runner", "connector_uncertain", job_id=rec["job_id"], reason=str(e))
+        # Hand control back: re-enable input so the user can drive, then retry.
+        rec["input_enabled"] = True
+        return AutomateResponse(
+            state=JobState.REQUIRES_USER_INTERVENTION, message=str(e),
+            source_host=sess.current_host,
+        )
+    except Exception as e:  # noqa: BLE001 - fail closed on anything unexpected
+        log("runner", "connector_failed", job_id=rec["job_id"], reason=str(e))
+        return AutomateResponse(
+            state=JobState.FAILED, message="Automation error; stopped.",
+            source_host=sess.current_host,
+        )
+
+    # Hand the bytes to the artifact service (internal). The PDF never goes to
+    # the LLM and the runner does not keep it.
+    with open(result.path, "rb") as f:
+        pdf_bytes = f.read()
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{settings.ARTIFACT_URL}/artifacts",
+            files={"file": (result.suggested_filename, pdf_bytes, "application/pdf")},
+            data={
+                "job_id": rec["job_id"],
+                "source_host": result.source_host,
+                "statement_date": result.statement_date or "",
+            },
+        )
+    if resp.status_code != 200:
+        return AutomateResponse(
+            state=JobState.FAILED,
+            message=f"Artifact validation failed: {resp.text[:200]}",
+            source_host=result.source_host,
+        )
+    meta = resp.json()
+    return AutomateResponse(
+        state=JobState.COMPLETED,
+        message="Statement downloaded and validated.",
+        artifact_id=meta["artifact_id"],
+        statement_date=result.statement_date,
+        source_host=result.source_host,
+    )
+
+
+@app.post("/sessions/{session_id}/destroy")
+async def destroy(session_id: str):
+    rec = SESSIONS.pop(session_id, None)
+    if rec:
+        await rec["session"].destroy()
+        log("runner", "session_destroyed", session_id=session_id)
+    return {"ok": True}
