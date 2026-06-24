@@ -41,7 +41,18 @@ class BrowserSession:
         self._pw = await async_playwright().start()
         self._browser = await self._pw.chromium.launch(
             headless=settings.HEADLESS,
-            args=["--disable-dev-shm-usage", "--no-sandbox"],
+            args=[
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                # Don't advertise automation. The session is human-operated (the
+                # user types their own credentials and solves any CAPTCHA); the
+                # default navigator.webdriver=true flag makes anti-bot systems
+                # distrust the session and loop CAPTCHAs forever even after the
+                # user solves them. This removes that false signal — it does NOT
+                # auto-solve or bypass challenges.
+                "--disable-blink-features=AutomationControlled",
+            ],
+            ignore_default_args=["--enable-automation"],
         )
         # accept_downloads so the connector can capture the PDF; a fresh context
         # every time means no local browser profile is ever reused.
