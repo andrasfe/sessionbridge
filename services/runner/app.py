@@ -22,7 +22,7 @@ from shared.schemas import (
 from shared.states import JobState
 
 from browser import BrowserSession
-from connectors import tmobile
+from connectors import tmobile, researchgate, overleaf
 from connectors.tmobile import ConnectorUncertain
 
 app = FastAPI(title="sessionbridge-runner")
@@ -83,8 +83,9 @@ async def ws_stream(ws: WebSocket, session_id: str):
             if rec["input_enabled"]:
                 try:
                     await sess.handle_input(msg["event"])
-                except Exception:
-                    pass
+                except Exception as e:  # log the failure mode (kind only, never content)
+                    log("runner", "input_error",
+                        kind=(msg.get("event") or {}).get("kind"), reason=str(e))
 
     sender = asyncio.create_task(pump_frames())
     receiver = asyncio.create_task(pump_input())
@@ -112,12 +113,66 @@ async def automate(session_id: str, lease_token: str):
 
     # checking_domain
     if not security.host_allowed(sess.current_host):
+        rec["input_enabled"] = True
         return AutomateResponse(
             state=JobState.REQUIRES_USER_INTERVENTION,
-            message="Current page is not on an allowed T-Mobile domain.",
+            message="Current page is not on an allowed domain.",
             source_host=sess.current_host,
         )
 
+    connector = rec.get("connector", "tmobile")
+
+    # ---- ResearchGate: return the publication list (downloads nothing) ----
+    if connector == "researchgate":
+        try:
+            papers = await researchgate.list_publications(page)
+        except ConnectorUncertain as e:
+            log("runner", "connector_uncertain", job_id=rec["job_id"], reason=str(e))
+            rec["input_enabled"] = True
+            return AutomateResponse(
+                state=JobState.REQUIRES_USER_INTERVENTION, message=str(e),
+                source_host=sess.current_host,
+            )
+        except Exception as e:  # noqa: BLE001 - fail closed
+            log("runner", "connector_failed", job_id=rec["job_id"], reason=str(e))
+            return AutomateResponse(
+                state=JobState.FAILED, message="Automation error; stopped.",
+                source_host=sess.current_host,
+            )
+        log("runner", "publications_listed", job_id=rec["job_id"], count=len(papers))
+        return AutomateResponse(
+            state=JobState.COMPLETED,
+            message=f"Found {len(papers)} publications.",
+            source_host=sess.current_host,
+            data={"papers": papers},
+        )
+
+    # ---- Overleaf: return the topmost project's title (opens nothing) ----
+    if connector == "overleaf":
+        try:
+            result = await overleaf.top_project(page)
+        except ConnectorUncertain as e:
+            log("runner", "connector_uncertain", job_id=rec["job_id"], reason=str(e))
+            rec["input_enabled"] = True
+            return AutomateResponse(
+                state=JobState.REQUIRES_USER_INTERVENTION, message=str(e),
+                source_host=sess.current_host,
+            )
+        except Exception as e:  # noqa: BLE001 - fail closed
+            log("runner", "connector_failed", job_id=rec["job_id"], reason=str(e))
+            return AutomateResponse(
+                state=JobState.FAILED, message="Automation error; stopped.",
+                source_host=sess.current_host,
+            )
+        log("runner", "top_project", job_id=rec["job_id"])
+        return AutomateResponse(
+            state=JobState.COMPLETED,
+            message=f"Topmost project: {result['top_project']}",
+            source_host=sess.current_host,
+            data=result,
+        )
+
+    # ---- T-Mobile: download + validate the latest statement PDF ----
     try:
         await tmobile.navigate_to_billing(page)
         result = await tmobile.find_and_download_latest(page)

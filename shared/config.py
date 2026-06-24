@@ -23,6 +23,13 @@ class Settings:
     CONTROL_PLANE_WS = _env("CONTROL_PLANE_WS", "") or CONTROL_PLANE_URL.replace("http", "ws", 1)
     RUNNER_WS = _env("RUNNER_WS", "") or RUNNER_URL.replace("http", "ws", 1)
 
+    # Target site. Defaults to T-Mobile but overridable so the same remote
+    # browser can be pointed at any site the user has a legitimate account on.
+    START_URL = _env("START_URL", "https://www.t-mobile.com/signin")
+    ALLOWED_DOMAINS = _env("ALLOWED_DOMAINS", "t-mobile.com,tmobile.com")
+    # Which deterministic connector runs after login: tmobile | researchgate
+    CONNECTOR = _env("CONNECTOR", "tmobile")
+
     # Lease lifetime (seconds).
     LEASE_TTL = int(_env("LEASE_TTL", "1800"))
 
@@ -46,6 +53,8 @@ class Settings:
     VIEWPORT_W = int(_env("VIEWPORT_W", "1280"))
     VIEWPORT_H = int(_env("VIEWPORT_H", "800"))
     SCREENCAST_QUALITY = int(_env("SCREENCAST_QUALITY", "60"))
+    # Seconds between viewer frames (screenshot stream). ~0.2 = 5 fps.
+    STREAM_INTERVAL = float(_env("STREAM_INTERVAL", "0.2"))
 
 
 settings = Settings()

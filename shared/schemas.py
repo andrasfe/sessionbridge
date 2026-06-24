@@ -22,6 +22,8 @@ class JobStatus(BaseModel):
     # Non-secret host the runner is currently on (for the domain banner).
     current_host: Optional[str] = None
     artifact_id: Optional[str] = None
+    # Connector-specific structured result (e.g. {"papers": [...]}).
+    data: Optional[dict] = None
     updated_at: float
 
 
@@ -47,6 +49,8 @@ class AutomateResponse(BaseModel):
     artifact_id: Optional[str] = None
     statement_date: Optional[str] = None
     source_host: Optional[str] = None
+    # Connector-specific structured result (e.g. {"papers": [...]}).
+    data: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------

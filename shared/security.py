@@ -7,15 +7,20 @@ from __future__ import annotations
 
 import re
 
+from .config import settings
+
 # ---------------------------------------------------------------------------
 # Allowed domains. Unknown domains stop automation (fail closed).
+# Configurable via ALLOWED_DOMAINS (comma-separated suffixes); defaults to
+# T-Mobile.
 # ---------------------------------------------------------------------------
-ALLOWED_DOMAIN_SUFFIXES = (
-    "t-mobile.com",
-    "tmobile.com",
+ALLOWED_DOMAIN_SUFFIXES = tuple(
+    d.strip().lower() for d in settings.ALLOWED_DOMAINS.split(",") if d.strip()
 )
 
-TMOBILE_LOGIN_URL = "https://www.t-mobile.com/signin"
+# Start URL for new sessions (configurable via START_URL).
+START_URL = settings.START_URL
+TMOBILE_LOGIN_URL = START_URL  # backwards-compatible alias
 
 
 def host_allowed(host: str | None) -> bool:

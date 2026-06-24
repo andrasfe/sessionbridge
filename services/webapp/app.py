@@ -29,6 +29,12 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/api/config")
+async def config():
+    # Lets the UI label itself for the configured target.
+    return {"connector": os.environ.get("CONNECTOR", "tmobile")}
+
+
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))

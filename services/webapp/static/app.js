@@ -15,6 +15,31 @@ const img = new Image();
 
 const TERMINAL = new Set(["completed", "failed", "stopped_by_user"]);
 
+// Per-connector UI labels.
+const LABELS = {
+  tmobile: {
+    sub: "Fetch your latest T-Mobile PDF statement through an isolated remote browser.",
+    action: "Fetch latest T-Mobile statement",
+  },
+  researchgate: {
+    sub: "List your ResearchGate publications through an isolated remote browser.",
+    action: "Fetch my publications",
+  },
+  overleaf: {
+    sub: "Fetch the title of your topmost Overleaf project through an isolated remote browser.",
+    action: "Fetch topmost project title",
+  },
+};
+async function applyConfig() {
+  try {
+    const { connector } = await (await fetch("/api/config")).json();
+    const l = LABELS[connector] || LABELS.tmobile;
+    document.querySelector(".sub").textContent = l.sub;
+    $("start").textContent = l.action;
+  } catch (_) { /* keep defaults */ }
+}
+applyConfig();
+
 function setBusy(running) {
   $("start").disabled = running;
   $("stop").disabled = !running;
@@ -165,18 +190,56 @@ function render(s) {
   $("continue").disabled = !loginMode;
   $("loginNotice").classList.toggle("hidden", !loginMode);
 
-  if (s.state === "completed" && s.artifact_id) showResult(s);
+  if (s.state === "completed") showResult(s);
   if (s.state === "requires_user_intervention") {
     $("continue").disabled = false; // let the user take over
   }
   if (TERMINAL.has(s.state)) setBusy(false);
 }
 
-async function showResult(s) {
-  const r = await fetch(`/api/jobs/${jobId}`);
-  const meta = await r.json();
+function showResult(meta) {
   $("result").classList.remove("hidden");
   $("resultMeta").innerHTML = "";
+  const d = meta.data || {};
+
+  if (d.top_project !== undefined) {
+    // Overleaf — topmost project title.
+    $("resultTitle").textContent = "Topmost project";
+    $("download").classList.add("hidden");
+    const li = document.createElement("li");
+    li.innerHTML = `<b>Title:</b> ${d.top_project}`;
+    $("resultMeta").appendChild(li);
+    if (Array.isArray(d.projects) && d.projects.length > 1) {
+      const li2 = document.createElement("li");
+      li2.innerHTML = `<b>Total projects:</b> ${d.projects.length}`;
+      $("resultMeta").appendChild(li2);
+    }
+    return;
+  }
+
+  const papers = d.papers;
+
+  if (papers && papers.length) {
+    // Publications list (e.g. ResearchGate) — no download.
+    $("resultTitle").textContent = `${papers.length} publications`;
+    $("download").classList.add("hidden");
+    const ol = document.createElement("ol");
+    ol.className = "papers";
+    for (const p of papers) {
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = p.url; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = p.title + (p.year ? ` (${p.year})` : "");
+      li.appendChild(a);
+      ol.appendChild(li);
+    }
+    $("resultMeta").appendChild(ol);
+    return;
+  }
+
+  // Default: downloadable artifact (e.g. T-Mobile statement PDF).
+  $("resultTitle").textContent = "Statement ready";
+  $("download").classList.remove("hidden");
   const add = (k, v) => {
     if (v == null || v === "") return;
     const li = document.createElement("li");

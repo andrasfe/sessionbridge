@@ -28,4 +28,8 @@ button.ghost { background: transparent; border: 1px solid #3a3f4b; color: var(--
 .result { margin-top: 20px; background: var(--panel); padding: 18px; border-radius: 10px; }
 .result h2 { margin: 0 0 10px; font-size: 16px; }
 .result ul { margin: 0 0 14px; padding-left: 18px; color: var(--muted); font-size: 14px; }
+.papers { margin: 0; padding-left: 22px; color: var(--txt); font-size: 14px; }
+.papers li { margin: 6px 0; }
+.papers a { color: #6db3ff; text-decoration: none; }
+.papers a:hover { text-decoration: underline; }
 .hidden { display: none; }

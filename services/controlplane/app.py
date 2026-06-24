@@ -73,9 +73,9 @@ async def create_job(req: CreateJobRequest):
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(f"{settings.RUNNER_URL}/sessions", json={
                 "job_id": job_id,
-                "connector": req.connector,
+                "connector": settings.CONNECTOR,
                 "lease_token": job.lease.token,
-                "start_url": security.TMOBILE_LOGIN_URL,
+                "start_url": security.START_URL,
             })
         resp.raise_for_status()
         job.session_id = resp.json()["session_id"]
@@ -125,6 +125,7 @@ async def confirm_login(job_id: str):
     job.current_host = data.get("source_host")
     job.statement_date = data.get("statement_date")
     job.artifact_id = data.get("artifact_id")
+    job.data = data.get("data")
     job.set_state(JobState(data["state"]), data.get("message", ""))
 
     # Session is always destroyed once automation has finished, whatever the
@@ -228,5 +229,5 @@ def _status(job: jobstore.Job) -> JobStatus:
     return JobStatus(
         job_id=job.job_id, state=job.state, message=job.message,
         current_host=job.current_host, artifact_id=job.artifact_id,
-        updated_at=job.updated_at,
+        data=job.data, updated_at=job.updated_at,
     )
