@@ -49,6 +49,19 @@ playwright install chromium
 ./stop_local.sh
 ```
 
+## Tear everything down
+Remove every container/network (and optionally volumes/images) created by any
+stack launched from this repo — matched by the compose `working_dir` label, so
+it catches the default project and any `-p` test stacks:
+```bash
+./kill-dockers.sh            # containers + networks
+./kill-dockers.sh --all      # also volumes + images
+./kill-dockers.sh --dry-run  # preview, change nothing
+```
+Each docker call is timeout-guarded, so a misbehaving daemon can't hang it; if
+the daemon refuses removal (e.g. snap-Docker under AppArmor) it says so and
+suggests restarting the daemon.
+
 ## Browser mode (headed vs headless)
 The runner runs Chromium **headed under a virtual display (Xvfb)** by default — a
 real browser sends a normal user-agent and tends to fare better against site bot
