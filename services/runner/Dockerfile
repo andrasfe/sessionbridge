@@ -9,5 +9,7 @@ COPY services/runner/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY shared ./shared
 COPY services/runner/ ./
+RUN chmod +x entrypoint.sh
 EXPOSE 8082
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8082"]
+# entrypoint runs headed under Xvfb when HEADLESS=false, else plain headless.
+CMD ["./entrypoint.sh"]

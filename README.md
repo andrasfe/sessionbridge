@@ -49,6 +49,18 @@ playwright install chromium
 ./stop_local.sh
 ```
 
+## Browser mode (headed vs headless)
+The runner runs Chromium **headed under a virtual display (Xvfb)** by default — a
+real browser sends a normal user-agent and tends to fare better against site bot
+walls. This is a real display, not fingerprint spoofing. For a lighter headless
+runner (e.g. CI), set `RUNNER_HEADLESS=true`:
+```bash
+RUNNER_HEADLESS=true docker compose up --build
+```
+Note: some sites (T-Mobile uses Akamai) block by **IP reputation**, so requests
+from datacenter/cloud IPs may get "Access Denied" regardless of headed/headless —
+run from a residential connection for the real login page.
+
 ## User flow
 1. Click **Fetch latest T-Mobile statement** — an isolated session starts and the viewer appears.
 2. Log into T-Mobile in the viewer (complete MFA/CAPTCHA yourself). Automation is paused.

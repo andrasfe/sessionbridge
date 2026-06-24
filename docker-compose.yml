@@ -36,7 +36,9 @@ services:
     environment:
       ARTIFACT_URL: http://artifacts:8084
       LLM_URL: http://llm:8083
-      HEADLESS: "true"
+      # Headed (under Xvfb) by default — real browsers fare better against bot
+      # walls. Set RUNNER_HEADLESS=true for a lighter headless runner.
+      HEADLESS: "${RUNNER_HEADLESS:-false}"
     # No `ports:` — unreachable from host and from the edge network.
     networks: [backend]
     shm_size: "1gb"
