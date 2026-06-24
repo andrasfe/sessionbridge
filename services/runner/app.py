@@ -22,7 +22,7 @@ from shared.schemas import (
 from shared.states import JobState
 
 from browser import BrowserSession
-from connectors import tmobile, researchgate, overleaf
+from connectors import tmobile, researchgate, overleaf, expedia
 from connectors.tmobile import ConnectorUncertain
 
 app = FastAPI(title="sessionbridge-runner")
@@ -170,6 +170,30 @@ async def automate(session_id: str, lease_token: str):
             message=f"Topmost project: {result['top_project']}",
             source_host=sess.current_host,
             data=result,
+        )
+
+    # ---- Expedia: scrape the visible flight offers (books nothing) ----
+    if connector == "expedia":
+        try:
+            result = await expedia.list_flights(page)
+        except ConnectorUncertain as e:
+            log("runner", "connector_uncertain", job_id=rec["job_id"], reason=str(e))
+            rec["input_enabled"] = True
+            return AutomateResponse(
+                state=JobState.REQUIRES_USER_INTERVENTION, message=str(e),
+                source_host=sess.current_host,
+            )
+        except Exception as e:  # noqa: BLE001 - fail closed
+            log("runner", "connector_failed", job_id=rec["job_id"], reason=str(e))
+            return AutomateResponse(
+                state=JobState.FAILED, message="Automation error; stopped.",
+                source_host=sess.current_host,
+            )
+        n = len(result["flights"])
+        log("runner", "flights_listed", job_id=rec["job_id"], count=n)
+        return AutomateResponse(
+            state=JobState.COMPLETED, message=f"Found {n} flight offers.",
+            source_host=sess.current_host, data=result,
         )
 
     # ---- T-Mobile: download + validate the latest statement PDF ----

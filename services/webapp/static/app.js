@@ -29,6 +29,11 @@ const LABELS = {
     sub: "Fetch the title of your topmost Overleaf project through an isolated remote browser.",
     action: "Fetch topmost project title",
   },
+  expedia: {
+    sub: "Search Expedia flights through an isolated remote browser, then extract the offers.",
+    action: "Open Expedia flight search",
+    cont: "Extract flight offers",
+  },
 };
 async function applyConfig() {
   try {
@@ -36,6 +41,7 @@ async function applyConfig() {
     const l = LABELS[connector] || LABELS.tmobile;
     document.querySelector(".sub").textContent = l.sub;
     $("start").textContent = l.action;
+    if (l.cont) $("continue").textContent = l.cont;
   } catch (_) { /* keep defaults */ }
 }
 applyConfig();
@@ -122,19 +128,20 @@ function toViewport(e) {
 
 canvas.addEventListener("mousemove", (e) => {
   const { x, y } = toViewport(e);
-  sendInput({ kind: "mouse", action: "move", x, y });
+  // buttons=1 while dragging so the remote side sees a real drag (sliders etc.)
+  sendInput({ kind: "mouse", action: "move", x, y, buttons: mouseDown ? 1 : 0 });
 });
 canvas.addEventListener("mousedown", (e) => {
   canvas.focus();
   mouseDown = true;
   const { x, y } = toViewport(e);
-  sendInput({ kind: "mouse", action: "down", x, y, button: btn(e), clickCount: 1 });
+  sendInput({ kind: "mouse", action: "down", x, y, button: btn(e), buttons: 1, clickCount: 1 });
 });
 window.addEventListener("mouseup", (e) => {
   if (!mouseDown) return;
   mouseDown = false;
   const { x, y } = toViewport(e);
-  sendInput({ kind: "mouse", action: "up", x, y, button: btn(e), clickCount: 1 });
+  sendInput({ kind: "mouse", action: "up", x, y, button: btn(e), buttons: 0, clickCount: 1 });
 });
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
@@ -201,6 +208,23 @@ function showResult(meta) {
   $("result").classList.remove("hidden");
   $("resultMeta").innerHTML = "";
   const d = meta.data || {};
+
+  if (Array.isArray(d.flights)) {
+    // Expedia — flight offers.
+    $("resultTitle").textContent = `${d.flights.length} flight offers`;
+    $("download").classList.add("hidden");
+    const ol = document.createElement("ol");
+    ol.className = "papers";
+    for (const f of d.flights) {
+      const li = document.createElement("li");
+      const price = f.price ? `<b>${f.price}</b>` : "";
+      const times = f.times ? ` · ${f.times}` : "";
+      li.innerHTML = `${price}${times}<br><span style="color:var(--muted)">${f.summary || ""}</span>`;
+      ol.appendChild(li);
+    }
+    $("resultMeta").appendChild(ol);
+    return;
+  }
 
   if (d.top_project !== undefined) {
     // Overleaf — topmost project title.

@@ -111,14 +111,23 @@ class BrowserSession:
         """Forward a user input event to the page via CDP."""
         kind = event.get("kind")
         if kind == "mouse":
-            await self._cdp.send("Input.dispatchMouseEvent", {
+            action = event.get("action")
+            args = {
                 "type": {"move": "mouseMoved", "down": "mousePressed",
-                         "up": "mouseReleased"}.get(event.get("action"), "mouseMoved"),
+                         "up": "mouseReleased"}.get(action, "mouseMoved"),
                 "x": float(event.get("x", 0)),
                 "y": float(event.get("y", 0)),
-                "button": event.get("button", "left") if event.get("action") != "move" else "none",
-                "clickCount": int(event.get("clickCount", 1)) if event.get("action") in ("down", "up") else 0,
-            })
+                # `buttons` is the bitmask of buttons held DURING the event. It is
+                # what makes a drag a drag: a mouseMoved with buttons=1 is a drag,
+                # without it the move is ignored by sliders/drag handles.
+                "buttons": int(event.get("buttons", 0)),
+            }
+            if action == "move":
+                args["button"] = "none"
+            else:
+                args["button"] = event.get("button", "left")
+                args["clickCount"] = int(event.get("clickCount", 1))
+            await self._cdp.send("Input.dispatchMouseEvent", args)
         elif kind == "wheel":
             await self._cdp.send("Input.dispatchMouseEvent", {
                 "type": "mouseWheel",
