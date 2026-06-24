@@ -135,6 +135,37 @@ async def confirm_login(job_id: str):
     return _status(job)
 
 
+@app.post("/jobs/{job_id}/agent")
+async def agent_turn(job_id: str, body: dict):
+    """Run one agent turn (a chat message) on the job's browser session."""
+    try:
+        job = jobstore.get(job_id)
+    except KeyError:
+        raise HTTPException(404, "no job")
+    if not job.session_id:
+        raise HTTPException(409, "session not running")
+    task = (body or {}).get("task", "").strip()
+    if not task:
+        raise HTTPException(422, "empty task")
+    try:
+        async with httpx.AsyncClient(timeout=600) as client:
+            resp = await client.post(
+                f"{settings.RUNNER_URL}/sessions/{job.session_id}/agent",
+                json={"task": task, "lease_token": job.lease.token},
+            )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:  # noqa: BLE001
+        log("controlplane", "agent_failed", job_id=job_id, reason=str(e))
+        raise HTTPException(502, "agent run failed")
+    job.current_host = None
+    try:
+        job.set_state(JobState(data["state"]), data.get("message", ""))
+    except Exception:
+        pass
+    return data
+
+
 @app.post("/jobs/{job_id}/stop", response_model=JobStatus)
 async def stop_job(job_id: str):
     try:

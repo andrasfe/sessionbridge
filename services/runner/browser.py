@@ -60,6 +60,23 @@ class BrowserSession:
             viewport={"width": settings.VIEWPORT_W, "height": settings.VIEWPORT_H},
             accept_downloads=True,
         )
+        # Present as a normal Chrome: hide the common automation tells (NOT
+        # hardware-fingerprint fabrication). navigator.webdriver is also handled
+        # by the launch flag; this covers the chrome object / plugins / languages
+        # / permissions surface that trivially flags a default automated browser.
+        await self._context.add_init_script("""
+          Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+          window.chrome = window.chrome || { runtime: {} };
+          Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+          if (!navigator.plugins || !navigator.plugins.length) {
+            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+          }
+          const _q = navigator.permissions && navigator.permissions.query;
+          if (_q) navigator.permissions.query = (p) =>
+            p && p.name === 'notifications'
+              ? Promise.resolve({state: Notification.permission})
+              : _q(p);
+        """)
         self.page = await self._context.new_page()
         # CDP session is used only for input dispatch (mouse/keyboard/paste).
         self._cdp = await self._context.new_cdp_session(self.page)

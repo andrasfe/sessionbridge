@@ -55,6 +55,11 @@ async def confirm_login(job_id: str):
     return await _proxy_json("POST", f"/jobs/{job_id}/confirm-login")
 
 
+@app.post("/api/jobs/{job_id}/agent")
+async def agent_turn(job_id: str, body: dict):
+    return await _proxy_json("POST", f"/jobs/{job_id}/agent", json=body)
+
+
 @app.post("/api/jobs/{job_id}/stop")
 async def stop(job_id: str):
     return await _proxy_json("POST", f"/jobs/{job_id}/stop")

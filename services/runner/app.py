@@ -24,6 +24,8 @@ from shared.states import JobState
 from browser import BrowserSession
 from connectors import tmobile, researchgate, overleaf, expedia
 from connectors.tmobile import ConnectorUncertain
+import agent as agentlib
+from shared.schemas import AgentRunRequest, AgentRunResult
 
 app = FastAPI(title="sessionbridge-runner")
 
@@ -55,6 +57,8 @@ async def start_session(req: StartSessionRequest):
         "lease_exp": time.time() + settings.LEASE_TTL,
         # Input forwarding is enabled during the login window.
         "input_enabled": True,
+        # Accumulated agent action history across chat turns on this session.
+        "history": [],
     }
     log("runner", "session_started", job_id=req.job_id, session_id=session_id)
     return StartSessionResponse(session_id=session_id)
@@ -243,6 +247,21 @@ async def automate(session_id: str, lease_token: str):
         statement_date=result.statement_date,
         source_host=result.source_host,
     )
+
+
+@app.post("/sessions/{session_id}/agent", response_model=AgentRunResult)
+async def agent_run(session_id: str, req: AgentRunRequest):
+    rec = SESSIONS.get(session_id)
+    if not rec:
+        raise HTTPException(404, "no session")
+    if not _lease_ok(rec, req.lease_token):
+        raise HTTPException(403, "invalid or expired lease")
+    sess: BrowserSession = rec["session"]
+    # The agent drives; user input stays enabled so the user can take over.
+    rec["input_enabled"] = True
+    log("runner", "agent_start", job_id=rec["job_id"])
+    result = await agentlib.run_agent(sess, req.task, rec["history"], req.max_steps)
+    return AgentRunResult(**result)
 
 
 @app.post("/sessions/{session_id}/destroy")

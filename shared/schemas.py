@@ -71,6 +71,45 @@ class ClassifyResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Browser agent (chatbot). The LLM decides ONE action from a screenshot + task
+# + history; the runner validates and executes it. The LLM never touches the
+# browser directly — it only returns an action for the runner to perform.
+# ---------------------------------------------------------------------------
+class AgentDecideRequest(BaseModel):
+    task: str
+    url: str = ""
+    history: list[str] = Field(default_factory=list)
+    screenshot_b64: str = ""  # JPEG, base64
+
+
+class AgentAction(BaseModel):
+    thought: str = ""
+    # navigate | click | type | key | scroll | wait | ask | done
+    action: str
+    url: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    text: Optional[str] = None
+    key: Optional[str] = None
+    dy: Optional[float] = None
+    message: Optional[str] = None
+    answer: Optional[str] = None
+
+
+class AgentRunRequest(BaseModel):
+    task: str
+    lease_token: str
+    max_steps: int = 18
+
+
+class AgentRunResult(BaseModel):
+    state: JobState
+    answer: str = ""
+    steps: list[dict] = Field(default_factory=list)
+    message: str = ""
+
+
+# ---------------------------------------------------------------------------
 # Artifact service API
 # ---------------------------------------------------------------------------
 class ArtifactMetadata(BaseModel):

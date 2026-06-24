@@ -1,102 +1,116 @@
-// SessionBridge frontend. Draws remote browser frames onto a canvas and forwards
-// input back. It only ever talks to this web app's own origin — never the runner.
+// SessionBridge agent UI. Chat drives a vision agent that controls an isolated
+// remote browser; the live viewer streams it and you can grab control any time.
 
 const VIEW_W = 1280, VIEW_H = 800;
 const $ = (id) => document.getElementById(id);
 
 let jobId = null;
 let ws = null;
-let pollTimer = null;
 let mouseDown = false;
+let busy = false;
 
 const canvas = $("viewer");
 const ctx = canvas.getContext("2d");
 const img = new Image();
 
-const TERMINAL = new Set(["completed", "failed", "stopped_by_user"]);
-
-// Per-connector UI labels.
-const LABELS = {
-  tmobile: {
-    sub: "Fetch your latest T-Mobile PDF statement through an isolated remote browser.",
-    action: "Fetch latest T-Mobile statement",
-  },
-  researchgate: {
-    sub: "List your ResearchGate publications through an isolated remote browser.",
-    action: "Fetch my publications",
-  },
-  overleaf: {
-    sub: "Fetch the title of your topmost Overleaf project through an isolated remote browser.",
-    action: "Fetch topmost project title",
-  },
-  expedia: {
-    sub: "Search Expedia flights through an isolated remote browser, then extract the offers.",
-    action: "Open Expedia flight search",
-    cont: "Extract flight offers",
-  },
-};
-async function applyConfig() {
-  try {
-    const { connector } = await (await fetch("/api/config")).json();
-    const l = LABELS[connector] || LABELS.tmobile;
-    document.querySelector(".sub").textContent = l.sub;
-    $("start").textContent = l.action;
-    if (l.cont) $("continue").textContent = l.cont;
-  } catch (_) { /* keep defaults */ }
-}
-applyConfig();
-
-function setBusy(running) {
-  $("start").disabled = running;
-  $("stop").disabled = !running;
+// ---------------------------------------------------------------- chat log
+function addMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  $("log").appendChild(div);
+  $("log").scrollTop = $("log").scrollHeight;
+  return div;
 }
 
-$("start").onclick = async () => {
-  resetUI();
-  setBusy(true);
-  let job;
+// ---------------------------------------------------------------- bootstrap
+async function init() {
+  setState("starting…", "");
+  // wait for backend services
+  for (let i = 0; i < 60; i++) {
+    try {
+      const r = await (await fetch("/api/ready")).json();
+      if (r.ready) break;
+    } catch (_) {}
+    await sleep(1000);
+  }
+  // start an isolated browser session
   try {
     const r = await fetch("/api/jobs", { method: "POST" });
-    if (!r.ok) {
-      let detail = await r.text();
-      try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
-      showError(`Couldn't start the remote browser (HTTP ${r.status}). ${detail}`);
-      return;
-    }
-    job = await r.json();
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    jobId = (await r.json()).job_id;
   } catch (e) {
-    showError("Could not reach the server: " + e);
+    setState("error", "");
+    addMsg("system", "Could not start a browser session: " + e);
     return;
   }
-  if (!job || !job.job_id) {
-    showError("Unexpected response from server; no job was created.");
-    return;
-  }
-  jobId = job.job_id;
   openStream();
-  poll();
-};
-
-function showError(text) {
-  $("state").textContent = "error";
-  $("state").className = "pill failed";
-  $("message").textContent = text;
-  setBusy(false);            // re-enable the start button so the user can retry
-  $("continue").disabled = true;
+  setState("ready", "");
+  $("task").disabled = false;
+  $("send").disabled = false;
+  $("task").focus();
+  addMsg("system", "Browser ready. Tell me what to do.");
 }
 
-$("continue").onclick = async () => {
-  $("continue").disabled = true;
-  $("loginNotice").classList.add("hidden");
-  await fetch(`/api/jobs/${jobId}/confirm-login`, { method: "POST" });
-  poll();
-};
+$("chatform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const task = $("task").value.trim();
+  if (!task || busy || !jobId) return;
+  addMsg("you", task);
+  $("task").value = "";
+  setBusy(true);
+  const thinking = addMsg("system", "working…");
+  try {
+    const r = await fetch(`/api/jobs/${jobId}/agent`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task }),
+    });
+    const data = await r.json();
+    thinking.remove();
+    renderResult(data);
+  } catch (err) {
+    thinking.remove();
+    addMsg("system", "Agent error: " + err);
+  }
+  setBusy(false);
+});
 
-$("stop").onclick = async () => {
-  if (jobId) await fetch(`/api/jobs/${jobId}/stop`, { method: "POST" });
-  teardown();
-};
+// Enter to send, Shift+Enter for newline.
+$("task").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("chatform").requestSubmit();
+  }
+});
 
+function renderResult(data) {
+  for (const s of data.steps || []) {
+    const bits = [s.action, s.detail].filter(Boolean).join(" ");
+    addMsg("step", `· ${bits}${s.thought ? " — " + s.thought : ""}`);
+  }
+  if (data.state === "completed" && data.answer) {
+    addMsg("agent", data.answer);
+  } else if (data.message) {
+    addMsg("agent", data.message);
+  } else {
+    addMsg("agent", "(no answer)");
+  }
+}
+
+function setBusy(b) {
+  busy = b;
+  $("send").disabled = b;
+  $("send").textContent = b ? "…" : "Send";
+}
+function setState(s, host) {
+  $("state").textContent = s;
+  $("state").className = "pill " + (s === "error" ? "failed" : "");
+  $("host").textContent = host ? `host: ${host}` : "";
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- viewer
 function openStream() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
@@ -107,8 +121,6 @@ function openStream() {
       img.src = "data:image/jpeg;base64," + msg.data;
     }
   };
-  ws.onerror = () => { $("message").textContent = "Live view connection error."; };
-  ws.onclose = () => {};
 }
 
 function sendInput(event) {
@@ -117,7 +129,6 @@ function sendInput(event) {
   }
 }
 
-// --- coordinate mapping: CSS pixels -> 1280x800 viewport ---
 function toViewport(e) {
   const rect = canvas.getBoundingClientRect();
   return {
@@ -128,7 +139,6 @@ function toViewport(e) {
 
 canvas.addEventListener("mousemove", (e) => {
   const { x, y } = toViewport(e);
-  // buttons=1 while dragging so the remote side sees a real drag (sliders etc.)
   sendInput({ kind: "mouse", action: "move", x, y, buttons: mouseDown ? 1 : 0 });
 });
 canvas.addEventListener("mousedown", (e) => {
@@ -148,12 +158,8 @@ canvas.addEventListener("wheel", (e) => {
   const { x, y } = toViewport(e);
   sendInput({ kind: "wheel", x, y, deltaX: e.deltaX, deltaY: e.deltaY });
 }, { passive: false });
+function btn(e) { return e.button === 2 ? "right" : e.button === 1 ? "middle" : "left"; }
 
-function btn(e) {
-  return e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
-}
-
-// keyboard (only when viewer focused)
 canvas.addEventListener("keydown", (e) => {
   e.preventDefault();
   const text = e.key.length === 1 ? e.key : "";
@@ -170,149 +176,4 @@ canvas.addEventListener("paste", (e) => {
 });
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
-// --- status polling ---
-function poll() {
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(async () => {
-    if (!jobId) return;
-    try {
-      const r = await fetch(`/api/jobs/${jobId}`);
-      if (!r.ok) { showError(`Lost the job (HTTP ${r.status}).`); return; }
-      const s = await r.json();
-      render(s);
-      if (!TERMINAL.has(s.state)) poll();
-    } catch (e) {
-      showError("Lost connection to the server: " + e);
-    }
-  }, 1000);
-}
-
-function render(s) {
-  $("state").textContent = s.state;
-  $("state").className = "pill " + s.state;
-  $("message").textContent = s.message || "";
-  $("host").textContent = s.current_host ? `host: ${s.current_host}` : "";
-
-  const loginMode = s.state === "awaiting_user_login" || s.state === "login_in_progress";
-  $("continue").disabled = !loginMode;
-  $("loginNotice").classList.toggle("hidden", !loginMode);
-
-  if (s.state === "completed") showResult(s);
-  if (s.state === "requires_user_intervention") {
-    $("continue").disabled = false; // let the user take over
-  }
-  if (TERMINAL.has(s.state)) setBusy(false);
-}
-
-function showResult(meta) {
-  $("result").classList.remove("hidden");
-  $("resultMeta").innerHTML = "";
-  const d = meta.data || {};
-
-  if (Array.isArray(d.flights)) {
-    // Expedia — flight offers.
-    $("resultTitle").textContent = `${d.flights.length} flight offers`;
-    $("download").classList.add("hidden");
-    const ol = document.createElement("ol");
-    ol.className = "papers";
-    for (const f of d.flights) {
-      const li = document.createElement("li");
-      const price = f.price ? `<b>${f.price}</b>` : "";
-      const times = f.times ? ` · ${f.times}` : "";
-      li.innerHTML = `${price}${times}<br><span style="color:var(--muted)">${f.summary || ""}</span>`;
-      ol.appendChild(li);
-    }
-    $("resultMeta").appendChild(ol);
-    return;
-  }
-
-  if (d.top_project !== undefined) {
-    // Overleaf — topmost project title.
-    $("resultTitle").textContent = "Topmost project";
-    $("download").classList.add("hidden");
-    const li = document.createElement("li");
-    li.innerHTML = `<b>Title:</b> ${d.top_project}`;
-    $("resultMeta").appendChild(li);
-    if (Array.isArray(d.projects) && d.projects.length > 1) {
-      const li2 = document.createElement("li");
-      li2.innerHTML = `<b>Total projects:</b> ${d.projects.length}`;
-      $("resultMeta").appendChild(li2);
-    }
-    return;
-  }
-
-  const papers = d.papers;
-
-  if (papers && papers.length) {
-    // Publications list (e.g. ResearchGate) — no download.
-    $("resultTitle").textContent = `${papers.length} publications`;
-    $("download").classList.add("hidden");
-    const ol = document.createElement("ol");
-    ol.className = "papers";
-    for (const p of papers) {
-      const li = document.createElement("li");
-      const a = document.createElement("a");
-      a.href = p.url; a.target = "_blank"; a.rel = "noopener";
-      a.textContent = p.title + (p.year ? ` (${p.year})` : "");
-      li.appendChild(a);
-      ol.appendChild(li);
-    }
-    $("resultMeta").appendChild(ol);
-    return;
-  }
-
-  // Default: downloadable artifact (e.g. T-Mobile statement PDF).
-  $("resultTitle").textContent = "Statement ready";
-  $("download").classList.remove("hidden");
-  const add = (k, v) => {
-    if (v == null || v === "") return;
-    const li = document.createElement("li");
-    li.innerHTML = `<b>${k}:</b> ${v}`;
-    $("resultMeta").appendChild(li);
-  };
-  add("source host", meta.current_host);
-  add("state", meta.state);
-  $("download").href = `/api/jobs/${jobId}/artifact`;
-}
-
-function resetUI() {
-  $("result").classList.add("hidden");
-  ctx.clearRect(0, 0, VIEW_W, VIEW_H);
-}
-
-function teardown() {
-  if (ws) ws.close();
-  ws = null;
-  clearTimeout(pollTimer);
-  setBusy(false);
-  $("continue").disabled = true;
-  $("loginNotice").classList.add("hidden");
-}
-
-// --- readiness gate: keep the Fetch button disabled until the remote browser
-// runner is actually up, so the user never clicks into a dead backend. ---
-async function checkReady() {
-  if (jobId) return; // a job is already running; don't interfere
-  let ready = false, down = "services";
-  try {
-    const s = await (await fetch("/api/ready")).json();
-    ready = !!s.ready;
-    down = Object.entries(s.services || {}).filter(([, v]) => !v).map(([k]) => k).join(", ") || down;
-  } catch (_) { /* server unreachable */ }
-
-  if (ready) {
-    $("start").disabled = false;
-    if ($("state").textContent === "starting…") {
-      $("state").textContent = "idle";
-      $("state").className = "pill";
-      $("message").textContent = "";
-    }
-    return; // ready — stop polling
-  }
-  $("start").disabled = true;
-  $("state").textContent = "starting…";
-  $("state").className = "pill";
-  $("message").textContent = `Waiting for the remote browser to be ready (${down} not ready)…`;
-  setTimeout(checkReady, 2000);
-}
-checkReady();
+init();

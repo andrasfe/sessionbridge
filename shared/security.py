@@ -24,6 +24,9 @@ TMOBILE_LOGIN_URL = START_URL  # backwards-compatible alias
 
 
 def host_allowed(host: str | None) -> bool:
+    # "*" opens browsing to any domain (agent mode); otherwise enforce the list.
+    if "*" in ALLOWED_DOMAIN_SUFFIXES:
+        return True
     if not host:
         return False
     host = host.lower().strip()
