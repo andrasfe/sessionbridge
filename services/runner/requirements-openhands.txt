@@ -1,0 +1,10 @@
+# Optional, heavy dependency for the OpenHands agent harness
+# (AGENT_HARNESS=openhands). Installed only when the image is built with
+# --build-arg INSTALL_OPENHANDS=1; the default image stays lean and the harness
+# factory falls back to the builtin loop when this package is absent.
+#
+# NOTE: openhands-ai pulls playwright>=1.55, but SessionBridge's own browser is
+# pinned to the base image's Chromium (1.49.1). The OpenHands harness drives our
+# browser through a custom tool and never uses OpenHands' own browser tooling,
+# so the Dockerfile re-pins playwright==1.49.1 after this install.
+openhands-ai==1.8.0

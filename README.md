@@ -65,6 +65,38 @@ Add a new provider by implementing the `LLMProvider` protocol and registering it
 carries optional `images` (base64 JPEG) so the vision agent works across
 providers. Use a **vision-capable** model — the agent reads screenshots.
 
+## Agent harness (pluggable)
+The loop that drives the remote browser is selectable at runtime via
+`AGENT_HARNESS` (same Protocol + factory + entry-point pattern as the LLM
+providers; lives in `services/runner/harness/`). Either way, SessionBridge stays
+the isolated browser — only the brain changes:
+
+| `AGENT_HARNESS` | Brain | Perception | Notes |
+|---|---|---|---|
+| `builtin` (default) | native vision loop via `services/llm` | screenshots | uses `LLM_PROVIDER`; needs a vision model |
+| `openhands` | an OpenHands agent loop | text (DOM/elements/visible text) | LLM = `openrouter/z-ai/glm-5.2` by default |
+
+The OpenHands harness runs an OpenHands agent that drives our browser through a
+custom `browser` tool (navigate/click/type/key/scroll/observe). It uses **text**
+perception, not screenshots — images in tool-result messages are dropped over
+the OpenAI/OpenRouter transport, so text is the provider-agnostic choice (the
+builtin harness is the vision one). It needs `OPENROUTER_API_KEY` and the heavy
+`openhands-ai` dependency, which is **not** in the default image — build with the
+overlay, which sets the `INSTALL_OPENHANDS=1` build arg and re-pins Playwright to
+the base image's version:
+
+```bash
+docker compose -f docker-compose.yml \
+               -f docker-compose.agent.yml \
+               -f docker-compose.openhands.yml up --build
+# override the model with OPENHANDS_MODEL=openrouter/<model>
+```
+
+If `openhands-ai` isn't installed, the factory **fails open** to the builtin
+harness rather than break the agent. Add your own harness by implementing the
+`AgentHarness` protocol and registering it (`register_harness`, or a
+`sessionbridge.harnesses` entry point).
+
 ## Tear everything down
 Remove every container/network (and optionally volumes/images) created by any
 stack launched from this repo — matched by the compose `working_dir` label, so

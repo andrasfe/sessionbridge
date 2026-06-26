@@ -1,0 +1,27 @@
+# OpenHands agent-harness overlay.
+#
+# Swaps the agent loop from the built-in vision loop to the OpenHands harness:
+# an OpenHands agent (LLM = openrouter/z-ai/glm-5.2) drives SessionBridge's own
+# remote browser through a custom text-perception tool. SessionBridge stays the
+# isolated browser; OpenHands is only the brain.
+#
+# Use together with the open-browsing agent overlay, e.g.:
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.agent.yml \
+#                  -f docker-compose.openhands.yml up --build
+#
+# Requires OPENROUTER_API_KEY in the environment (or .env). The runner image
+# must be built with the OpenHands dependency, which this overlay requests via
+# the INSTALL_OPENHANDS build arg.
+services:
+  runner:
+    build:
+      context: .
+      dockerfile: services/runner/Dockerfile
+      args:
+        INSTALL_OPENHANDS: "1"
+    environment:
+      AGENT_HARNESS: openhands
+      OPENHANDS_MODEL: ${OPENHANDS_MODEL:-openrouter/z-ai/glm-5.2}
+      # The harness calls OpenRouter from inside the runner container.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}

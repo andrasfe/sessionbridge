@@ -24,7 +24,7 @@ from shared.states import JobState
 from browser import BrowserSession
 from connectors import tmobile, researchgate, overleaf, expedia
 from connectors.tmobile import ConnectorUncertain
-import agent as agentlib
+from harness import get_harness_from_env
 from shared.schemas import AgentRunRequest, AgentRunResult
 
 app = FastAPI(title="sessionbridge-runner")
@@ -259,8 +259,9 @@ async def agent_run(session_id: str, req: AgentRunRequest):
     sess: BrowserSession = rec["session"]
     # The agent drives; user input stays enabled so the user can take over.
     rec["input_enabled"] = True
-    log("runner", "agent_start", job_id=rec["job_id"])
-    result = await agentlib.run_agent(sess, req.task, rec["history"], req.max_steps)
+    harness = get_harness_from_env()
+    log("runner", "agent_start", job_id=rec["job_id"], harness=harness.name)
+    result = await harness.run(sess, req.task, rec["history"], req.max_steps)
     return AgentRunResult(**result)
 
 
