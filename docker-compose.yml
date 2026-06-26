@@ -2,15 +2,14 @@
 #
 # Networks:
 #   edge     -> webapp <-> controlplane only. Webapp is the only published port.
-#   backend  -> controlplane <-> runner/llm/artifacts. The runner lives ONLY
-#               here and publishes NO ports, so the web app (on `edge`) cannot
-#               reach it and it isn't exposed to the host — the control plane is
-#               the sole bridge. The network is intentionally NOT `internal:
-#               true`: the runner still needs OUTBOUND internet to load
-#               t-mobile.com. That's exactly the AWS model — a private subnet
-#               with a NAT gateway: outbound allowed, public inbound denied
-#               (there, by no public IP + a security group that only admits the
-#               control plane).
+#   backend  -> controlplane <-> runner/llm. The runner lives ONLY here and
+#               publishes NO ports, so the web app (on `edge`) cannot reach it
+#               and it isn't exposed to the host — the control plane is the sole
+#               bridge. The network is intentionally NOT `internal: true`: the
+#               runner still needs OUTBOUND internet to load target sites. That's
+#               exactly the AWS model — a private subnet with a NAT gateway:
+#               outbound allowed, public inbound denied (there, by no public IP +
+#               a security group that only admits the control plane).
 
 services:
   webapp:
@@ -27,14 +26,12 @@ services:
     environment:
       RUNNER_URL: http://runner:8082
       LLM_URL: http://llm:8083
-      ARTIFACT_URL: http://artifacts:8084
     networks: [edge, backend]
-    depends_on: [runner, artifacts]
+    depends_on: [runner]
 
   runner:
     build: { context: ., dockerfile: services/runner/Dockerfile }
     environment:
-      ARTIFACT_URL: http://artifacts:8084
       LLM_URL: http://llm:8083
       # Headed (under Xvfb) by default — real browsers fare better against bot
       # walls. Set RUNNER_HEADLESS=true for a lighter headless runner.
@@ -42,7 +39,6 @@ services:
     # No `ports:` — unreachable from host and from the edge network.
     networks: [backend]
     shm_size: "1gb"
-    depends_on: [artifacts]
 
   llm:
     build: { context: ., dockerfile: services/llm/Dockerfile }
@@ -57,20 +53,6 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
     networks: [backend]
 
-  artifacts:
-    build: { context: ., dockerfile: services/artifacts/Dockerfile }
-    environment:
-      ARTIFACT_BACKEND: local
-      METADATA_BACKEND: local
-      ARTIFACT_LOCAL_DIR: /data/artifacts
-      METADATA_LOCAL_DIR: /data/metadata
-    volumes:
-      - artifacts-data:/data
-    networks: [backend]
-
 networks:
   edge:
   backend:
-
-volumes:
-  artifacts-data:

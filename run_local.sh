@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run all five services locally without Docker (for development).
+# Run all services locally without Docker (for development).
 # Each service shares the same repo root on PYTHONPATH so `import shared` works.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -8,11 +8,8 @@ export PYTHONPATH="$PWD"
 export CONTROL_PLANE_URL="http://localhost:8081"
 export RUNNER_URL="http://localhost:8082"
 export LLM_URL="http://localhost:8083"
-export ARTIFACT_URL="http://localhost:8084"
-export ARTIFACT_LOCAL_DIR="$PWD/.data/artifacts"
-export METADATA_LOCAL_DIR="$PWD/.data/metadata"
 export HEADLESS="${HEADLESS:-true}"
-mkdir -p "$ARTIFACT_LOCAL_DIR" "$METADATA_LOCAL_DIR" .data/logs
+mkdir -p .data/logs
 
 # Load optional .env (OpenRouter key, etc.)
 [ -f .env ] && set -a && . ./.env && set +a
@@ -25,7 +22,6 @@ start() {  # name dir port
   pids+=($!)
 }
 
-start artifacts   artifacts    8084
 start llm         llm          8083
 start runner      runner       8082
 start controlplane controlplane 8081

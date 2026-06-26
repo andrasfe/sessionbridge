@@ -1,0 +1,22 @@
+# Local-run overlay: publishes the web app on :8090 and relaxes AppArmor so the
+# headed Chromium runner works under snap-packaged Docker. Browsing is open
+# (ALLOWED_DOMAINS="*") — the same as the base defaults, set explicitly here.
+services:
+  webapp:
+    ports: !override
+      - "8090:8080"
+    security_opt: [apparmor=unconfined]
+  controlplane:
+    environment:
+      START_URL: "about:blank"
+      ALLOWED_DOMAINS: "*"
+    security_opt: [apparmor=unconfined]
+  runner:
+    environment:
+      ALLOWED_DOMAINS: "*"
+    security_opt: [apparmor=unconfined]
+  llm:
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o}
+    security_opt: [apparmor=unconfined]

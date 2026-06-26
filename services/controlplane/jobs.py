@@ -20,9 +20,6 @@ class Job:
     state: JobState = JobState.CREATED
     message: str = ""
     current_host: Optional[str] = None
-    artifact_id: Optional[str] = None
-    statement_date: Optional[str] = None
-    data: Optional[dict] = None
     session_id: Optional[str] = None
     lease: Optional[Lease] = None
     updated_at: float = field(default_factory=time.time)

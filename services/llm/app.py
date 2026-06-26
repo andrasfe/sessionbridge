@@ -1,15 +1,14 @@
 """LLM service (optional, provider-agnostic).
 
-Two jobs, both routed through the pluggable `llm_providers` package so the same
-code works with OpenRouter, OpenAI, Anthropic, or any registered provider
-(select via LLM_PROVIDER + the matching API key):
+Powers the builtin vision harness, routed through the pluggable `llm_providers`
+package so the same code works with OpenRouter, OpenAI, Anthropic, or any
+registered provider (select via LLM_PROVIDER + the matching API key):
 
-1. /classify  — label REDACTED, post-login visible page text (text only).
-2. /agent/act — the browser agent's brain: given task + history + a screenshot,
-   return ONE next action. The LLM only proposes actions; the runner executes
-   them. It never controls the browser directly.
+  /agent/act — the browser agent's brain: given task + history + a screenshot,
+  return ONE next action. The LLM only proposes actions; the runner executes
+  them. It never controls the browser directly.
 
-Disabled (returns enabled=false / an "ask" action) when no provider key is set.
+Disabled (returns an "ask" action) when no provider key is set.
 """
 from __future__ import annotations
 
@@ -19,10 +18,7 @@ import re
 from fastapi import FastAPI
 
 from shared.logging import log
-from shared.security import redact
-from shared.schemas import (
-    AgentAction, AgentDecideRequest, ClassifyRequest, ClassifyResponse,
-)
+from shared.schemas import AgentAction, AgentDecideRequest
 
 from llm_providers import LLMProvider, Message, get_provider_from_env
 
@@ -61,33 +57,6 @@ you have the information the task requested, use "done" with a clear answer."""
 @app.get("/health")
 async def health():
     return {"ok": True, "enabled": _provider is not None}
-
-
-@app.post("/classify", response_model=ClassifyResponse)
-async def classify(req: ClassifyRequest):
-    if _provider is None:
-        return ClassifyResponse(enabled=False, note="LLM disabled (no provider key).")
-
-    # Defence in depth: redact again even though the caller already redacted.
-    text = redact(req.redacted_text, limit=6000)
-    labels = ", ".join(req.candidate_labels)
-    messages = [
-        Message(role="user", content=(
-            "You label web page text. Respond with EXACTLY one of these labels "
-            f"and nothing else: {labels}.\n\nPAGE TEXT:\n{text}"
-        )),
-    ]
-    try:
-        # Generous cap so "thinking" models aren't starved before emitting a label.
-        resp = await _provider.complete(messages, temperature=0.0, max_tokens=200)
-        out = resp.content.strip().lower()
-    except Exception as e:  # noqa: BLE001
-        log("llm", "classify_error", reason=str(e))
-        return ClassifyResponse(enabled=True, note="LLM call failed; ignored.")
-
-    match = next((l for l in req.candidate_labels if l.lower() in out), None)
-    log("llm", "classified", label=match or "")
-    return ClassifyResponse(label=match, confidence=1.0 if match else 0.0, enabled=True)
 
 
 def _extract_json(text: str) -> dict:

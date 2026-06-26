@@ -11,7 +11,7 @@ import os
 
 import httpx
 import websockets
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -29,12 +29,6 @@ async def health():
     return {"ok": True}
 
 
-@app.get("/api/config")
-async def config():
-    # Lets the UI label itself for the configured target.
-    return {"connector": os.environ.get("CONNECTOR", "tmobile")}
-
-
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
@@ -47,12 +41,7 @@ async def ready():
 
 @app.post("/api/jobs")
 async def create_job():
-    return await _proxy_json("POST", "/jobs", json={"connector": "tmobile"})
-
-
-@app.post("/api/jobs/{job_id}/confirm-login")
-async def confirm_login(job_id: str):
-    return await _proxy_json("POST", f"/jobs/{job_id}/confirm-login")
+    return await _proxy_json("POST", "/jobs", json={})
 
 
 @app.post("/api/jobs/{job_id}/agent")
@@ -73,17 +62,6 @@ async def stop(job_id: str):
 @app.get("/api/jobs/{job_id}")
 async def status(job_id: str):
     return await _proxy_json("GET", f"/jobs/{job_id}")
-
-
-@app.get("/api/jobs/{job_id}/artifact")
-async def artifact(job_id: str):
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.get(f"{CP}/jobs/{job_id}/artifact")
-    if resp.status_code != 200:
-        raise HTTPException(resp.status_code, "artifact unavailable")
-    return Response(content=resp.content, media_type="application/pdf",
-                    headers={"Content-Disposition": resp.headers.get(
-                        "content-disposition", "attachment; filename=statement.pdf")})
 
 
 @app.websocket("/ws/{job_id}")

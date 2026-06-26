@@ -1,9 +1,9 @@
 """Control plane.
 
-Orchestrates the job state machine and is the ONLY bridge between the public web
-app and the private runner. It never holds raw credentials or session state — it
-mints a short-lived lease, tells the runner what to do, and proxies the frame /
-input stream. The web app and the runner never speak to each other directly.
+Orchestrates the job lifecycle and is the ONLY bridge between the public web app
+and the private runner. It never holds session state — it mints a short-lived
+lease, tells the runner what to do, and proxies the frame / input stream. The web
+app and the runner never speak to each other directly.
 """
 from __future__ import annotations
 
@@ -13,14 +13,13 @@ import secrets
 import httpx
 import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
 
 from shared.config import settings
 from shared.lease import mint_lease
 from shared.logging import log
 from shared import security
 from shared.schemas import CreateJobRequest, JobStatus
-from shared.states import JobState
+from shared.states import JobState, TERMINAL_STATES
 
 import jobs as jobstore
 
@@ -44,16 +43,10 @@ async def _healthy(base_url: str) -> bool:
 
 @app.get("/ready")
 async def ready():
-    """Are the downstream services the job depends on actually up?
-
-    The web app uses this to gate the "Fetch" button so the user gets an
-    explicit "remote browser not ready yet" instead of a failed job.
-    """
-    runner_ok, artifacts_ok = await _healthy(settings.RUNNER_URL), await _healthy(settings.ARTIFACT_URL)
-    return {
-        "ready": runner_ok and artifacts_ok,
-        "services": {"runner": runner_ok, "artifacts": artifacts_ok},
-    }
+    """Is the remote browser runner up? The web app gates on this so the user
+    gets an explicit "remote browser not ready yet" instead of a failed job."""
+    runner_ok = await _healthy(settings.RUNNER_URL)
+    return {"ready": runner_ok, "services": {"runner": runner_ok}}
 
 
 @app.post("/jobs", response_model=JobStatus)
@@ -73,7 +66,6 @@ async def create_job(req: CreateJobRequest):
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(f"{settings.RUNNER_URL}/sessions", json={
                 "job_id": job_id,
-                "connector": settings.CONNECTOR,
                 "lease_token": job.lease.token,
                 "start_url": security.START_URL,
             })
@@ -84,54 +76,8 @@ async def create_job(req: CreateJobRequest):
         log("controlplane", "runner_start_failed", job_id=job_id, reason=str(e))
         raise HTTPException(502, "runner unavailable")
 
-    job.set_state(JobState.AWAITING_USER_LOGIN,
-                  "Log into T-Mobile in the viewer, then click Continue.")
+    job.set_state(JobState.READY, "Browser ready. Type a URL or a task.")
     log("controlplane", "job_created", job_id=job_id)
-    return _status(job)
-
-
-@app.post("/jobs/{job_id}/confirm-login", response_model=JobStatus)
-async def confirm_login(job_id: str):
-    try:
-        job = jobstore.get(job_id)
-    except KeyError:
-        raise HTTPException(404, "no job")
-    # Also allow retrying after the system handed control back to the user.
-    if job.state not in (JobState.AWAITING_USER_LOGIN, JobState.LOGIN_IN_PROGRESS,
-                         JobState.REQUIRES_USER_INTERVENTION):
-        raise HTTPException(409, f"cannot confirm login from state {job.state}")
-
-    job.set_state(JobState.LOGIN_CONFIRMED_BY_USER, "Login confirmed by user.")
-    # Coarse-grained progression: the runner performs domain-check ->
-    # navigate -> find -> download -> validate in one deterministic call and
-    # returns the final state. We mark CHECKING_DOMAIN so the UI reflects that
-    # automation has resumed.
-    job.set_state(JobState.CHECKING_DOMAIN, "Verifying allowed domain and locating billing.")
-
-    try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            resp = await client.post(
-                f"{settings.RUNNER_URL}/sessions/{job.session_id}/automate",
-                params={"lease_token": job.lease.token},
-            )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:  # noqa: BLE001
-        job.set_state(JobState.FAILED, "Automation could not run.")
-        log("controlplane", "automate_failed", job_id=job_id, reason=str(e))
-        await _destroy_session(job)
-        return _status(job)
-
-    job.current_host = data.get("source_host")
-    job.statement_date = data.get("statement_date")
-    job.artifact_id = data.get("artifact_id")
-    job.data = data.get("data")
-    job.set_state(JobState(data["state"]), data.get("message", ""))
-
-    # Session is always destroyed once automation has finished, whatever the
-    # outcome (completed / failed / requires intervention handled separately).
-    if job.state in (JobState.COMPLETED, JobState.FAILED):
-        await _destroy_session(job)
     return _status(job)
 
 
@@ -148,7 +94,7 @@ async def navigate(job_id: str, body: dict):
     if not url:
         raise HTTPException(422, "empty url")
     if not url.startswith(("http://", "https://")):
-        url = "https://" + url  # be forgiving: "expedia.com" -> "https://expedia.com"
+        url = "https://" + url  # be forgiving: "example.com" -> "https://example.com"
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
@@ -177,6 +123,10 @@ async def agent_turn(job_id: str, body: dict):
     if not task:
         raise HTTPException(422, "empty task")
     try:
+        job.set_state(JobState.RUNNING, "Agent working.")
+    except Exception:
+        pass
+    try:
         async with httpx.AsyncClient(timeout=600) as client:
             resp = await client.post(
                 f"{settings.RUNNER_URL}/sessions/{job.session_id}/agent",
@@ -201,7 +151,10 @@ async def stop_job(job_id: str):
         job = jobstore.get(job_id)
     except KeyError:
         raise HTTPException(404, "no job")
-    job.set_state(JobState.STOPPED_BY_USER, "Stopped by user.")
+    # Stop is idempotent: a job that already ended (failed/stopped) just gets its
+    # session torn down again, never a transition error.
+    if job.state not in TERMINAL_STATES:
+        job.set_state(JobState.STOPPED_BY_USER, "Stopped by user.")
     await _destroy_session(job)
     return _status(job)
 
@@ -212,26 +165,6 @@ async def get_job(job_id: str):
         return _status(jobstore.get(job_id))
     except KeyError:
         raise HTTPException(404, "no job")
-
-
-@app.get("/jobs/{job_id}/artifact")
-async def get_artifact(job_id: str):
-    try:
-        job = jobstore.get(job_id)
-    except KeyError:
-        raise HTTPException(404, "no job")
-    if not job.artifact_id:
-        raise HTTPException(404, "no artifact yet")
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.get(f"{settings.ARTIFACT_URL}/artifacts/{job.artifact_id}/download")
-    if resp.status_code != 200:
-        raise HTTPException(502, "artifact unavailable")
-    return Response(
-        content=resp.content,
-        media_type="application/pdf",
-        headers={"Content-Disposition": resp.headers.get(
-            "content-disposition", "attachment; filename=statement.pdf")},
-    )
 
 
 @app.websocket("/ws/{job_id}")
@@ -247,13 +180,6 @@ async def ws_proxy(ws: WebSocket, job_id: str):
         await ws.close(code=4404)
         return
     await ws.accept()
-
-    # First user interaction means login is in progress.
-    if job.state == JobState.AWAITING_USER_LOGIN:
-        try:
-            job.set_state(JobState.LOGIN_IN_PROGRESS, "Login in progress.")
-        except ValueError:
-            pass
 
     runner_ws_url = f"{settings.RUNNER_WS}/ws/{job.session_id}"
     try:
@@ -288,6 +214,5 @@ async def _destroy_session(job: jobstore.Job) -> None:
 def _status(job: jobstore.Job) -> JobStatus:
     return JobStatus(
         job_id=job.job_id, state=job.state, message=job.message,
-        current_host=job.current_host, artifact_id=job.artifact_id,
-        data=job.data, updated_at=job.updated_at,
+        current_host=job.current_host, updated_at=job.updated_at,
     )
