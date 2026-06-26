@@ -46,6 +46,10 @@ from openhands.sdk.tool import (
 )
 
 DEFAULT_MODEL = os.getenv("OPENHANDS_MODEL", "openrouter/z-ai/glm-5.2")
+# Cap output tokens per call. Without this litellm requests the model maximum
+# (65536 for glm-5.2), which OpenRouter rejects with a 402 unless the account
+# can afford that ceiling. A few-thousand-token cap is ample for tool-calling.
+MAX_OUTPUT_TOKENS = int(os.getenv("OPENHANDS_MAX_OUTPUT_TOKENS", "4096"))
 
 # Carries (BrowserSession, event_loop) into the (threaded, sync) tool executor.
 # asyncio.to_thread copies the calling task's context, so a value set in run()
@@ -224,7 +228,8 @@ class OpenHandsHarness:
             elif kind == "FinishAction":
                 answer_holder.append(getattr(action, "message", "") or "")
 
-        llm = LLM(model=DEFAULT_MODEL, api_key=api_key, service_id="sessionbridge-agent")
+        llm = LLM(model=DEFAULT_MODEL, api_key=api_key, service_id="sessionbridge-agent",
+                  max_output_tokens=MAX_OUTPUT_TOKENS)
         agent = Agent(llm=llm, tools=[Tool(name="browser")], system_prompt=SYSTEM_PROMPT)
         conv = Conversation(agent, workspace=tempfile.mkdtemp(prefix="oh-"), callbacks=[cb])
         conv_box.append(conv)
