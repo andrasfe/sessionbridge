@@ -13,9 +13,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # afterwards — our harness drives SessionBridge's own browser, not OpenHands'.
 ARG INSTALL_OPENHANDS=0
 COPY services/runner/requirements-openhands.txt .
+# legacy-resolver: openhands-ai's transitive `lmnr` over-pins
+# opentelemetry-semantic-conventions==0.60b1, which no opentelemetry-instrumentation
+# release matches — a metadata-only conflict that's harmless at runtime. The new
+# resolver refuses it (ResolutionImpossible); the legacy resolver installs the
+# (runtime-fine) set. Then re-pin playwright to the base image's Chromium version.
 RUN if [ "$INSTALL_OPENHANDS" = "1" ]; then \
-      pip install --no-cache-dir -r requirements-openhands.txt && \
-      pip install --no-cache-dir --force-reinstall playwright==1.49.1; \
+      pip install --no-cache-dir --use-deprecated=legacy-resolver -r requirements-openhands.txt && \
+      pip install --no-cache-dir -r requirements.txt "starlette>=0.40.0,<0.42.0"; \
     fi
 COPY shared ./shared
 COPY services/runner/ ./
