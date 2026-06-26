@@ -1,26 +1,42 @@
-"""LLM service (optional).
+"""LLM service (optional, provider-agnostic).
 
-Classifies REDACTED, post-login visible page text into one of a few candidate
-labels to help the control plane reason about page type. It never controls the
-browser and never sees credentials, cookies, tokens, login pages or PDF content.
-Disabled entirely unless an OpenRouter key is configured.
+Two jobs, both routed through the pluggable `llm_providers` package so the same
+code works with OpenRouter, OpenAI, Anthropic, or any registered provider
+(select via LLM_PROVIDER + the matching API key):
+
+1. /classify  — label REDACTED, post-login visible page text (text only).
+2. /agent/act — the browser agent's brain: given task + history + a screenshot,
+   return ONE next action. The LLM only proposes actions; the runner executes
+   them. It never controls the browser directly.
+
+Disabled (returns enabled=false / an "ask" action) when no provider key is set.
 """
 from __future__ import annotations
-
-import httpx
-from fastapi import FastAPI
 
 import json
 import re
 
-from shared.config import settings
+from fastapi import FastAPI
+
 from shared.logging import log
 from shared.security import redact
 from shared.schemas import (
     AgentAction, AgentDecideRequest, ClassifyRequest, ClassifyResponse,
 )
 
+from llm_providers import LLMProvider, Message, get_provider_from_env
+
 app = FastAPI(title="sessionbridge-llm")
+
+# Build the provider once from the environment (LLM_PROVIDER + provider keys).
+# None when no key is configured → the service reports itself disabled.
+try:
+    _provider: LLMProvider | None = get_provider_from_env()
+    log("llm", "provider_ready", model=_provider.default_model)
+except Exception as e:  # noqa: BLE001 - missing key / unknown provider
+    _provider = None
+    log("llm", "provider_disabled", reason=str(e))
+
 
 AGENT_SYSTEM = """You are a web-browsing agent controlling a Chromium browser at \
 1280x800 pixels. You are given the user's task, the recent action history, and a \
@@ -44,34 +60,27 @@ you have the information the task requested, use "done" with a clear answer."""
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "enabled": settings.LLM_ENABLED}
+    return {"ok": True, "enabled": _provider is not None}
 
 
 @app.post("/classify", response_model=ClassifyResponse)
 async def classify(req: ClassifyRequest):
-    if not settings.LLM_ENABLED:
-        return ClassifyResponse(enabled=False, note="LLM disabled (no OpenRouter key).")
+    if _provider is None:
+        return ClassifyResponse(enabled=False, note="LLM disabled (no provider key).")
 
     # Defence in depth: redact again even though the caller already redacted.
     text = redact(req.redacted_text, limit=6000)
     labels = ", ".join(req.candidate_labels)
-    prompt = (
-        "You label web page text. Respond with EXACTLY one of these labels and "
-        f"nothing else: {labels}.\n\nPAGE TEXT:\n{text}"
-    )
+    messages = [
+        Message(role="user", content=(
+            "You label web page text. Respond with EXACTLY one of these labels "
+            f"and nothing else: {labels}.\n\nPAGE TEXT:\n{text}"
+        )),
+    ]
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
-                json={
-                    "model": settings.OPENROUTER_MODEL,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 10, "temperature": 0,
-                },
-            )
-        resp.raise_for_status()
-        out = resp.json()["choices"][0]["message"]["content"].strip().lower()
+        # Generous cap so "thinking" models aren't starved before emitting a label.
+        resp = await _provider.complete(messages, temperature=0.0, max_tokens=200)
+        out = resp.content.strip().lower()
     except Exception as e:  # noqa: BLE001
         log("llm", "classify_error", reason=str(e))
         return ClassifyResponse(enabled=True, note="LLM call failed; ignored.")
@@ -100,46 +109,35 @@ def _extract_json(text: str) -> dict:
 
 @app.post("/agent/act", response_model=AgentAction)
 async def agent_act(req: AgentDecideRequest):
-    if not settings.LLM_ENABLED:
+    if _provider is None:
         # No key → tell the runner to hand control to the human.
         return AgentAction(action="ask",
-                           message="No LLM key configured (set OPENROUTER_API_KEY).")
+                           message="No LLM provider configured (set a provider key).")
 
     history = "\n".join(req.history[-12:]) or "(none yet)"
     user_text = (
         f"TASK:\n{req.task}\n\nCURRENT URL: {req.url or 'about:blank'}\n\n"
         f"RECENT ACTIONS:\n{history}\n\nDecide the next action."
     )
-    content = [{"type": "text", "text": user_text}]
-    if req.screenshot_b64:
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{req.screenshot_b64}"},
-        })
+    messages = [
+        Message(role="system", content=AGENT_SYSTEM),
+        Message(
+            role="user",
+            content=user_text,
+            images=(req.screenshot_b64,) if req.screenshot_b64 else (),
+        ),
+    ]
 
     try:
-        async with httpx.AsyncClient(timeout=90) as client:
-            resp = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
-                json={
-                    "model": settings.OPENROUTER_MODEL,
-                    "messages": [
-                        {"role": "system", "content": AGENT_SYSTEM},
-                        {"role": "user", "content": content},
-                    ],
-                    "max_tokens": 500, "temperature": 0,
-                },
-            )
-        resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"]
+        resp = await _provider.complete(messages, temperature=0.0, max_tokens=500)
+        raw = resp.content
     except Exception as e:  # noqa: BLE001
         log("llm", "agent_error", reason=str(e))
         return AgentAction(action="ask",
                            message=f"LLM call failed ({type(e).__name__}); take over or retry.")
 
     data = _extract_json(raw)
-    # Log only the action type + thought (never the screenshot or typed text).
+    # Log only the action type (never the screenshot or typed text).
     log("llm", "agent_decided", act=data.get("action"))
     try:
         return AgentAction(**data)

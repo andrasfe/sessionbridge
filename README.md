@@ -49,6 +49,22 @@ playwright install chromium
 ./stop_local.sh
 ```
 
+## LLM providers (pluggable)
+The agent's brain and the classifier go through `services/llm/llm_providers/`, a
+provider-agnostic abstraction (`LLMProvider` protocol + `Message` /
+`CompletionResponse` + a factory). Switch backends with env only — no code change:
+
+```bash
+LLM_PROVIDER=openrouter  OPENROUTER_API_KEY=…  OPENROUTER_MODEL=openai/gpt-4o
+LLM_PROVIDER=openai      OPENAI_API_KEY=…      OPENAI_MODEL=gpt-4o
+LLM_PROVIDER=anthropic   ANTHROPIC_API_KEY=…   ANTHROPIC_MODEL=claude-sonnet-4-6
+```
+
+Add a new provider by implementing the `LLMProvider` protocol and registering it
+(`register_provider`, or a `llm_providers.providers` entry point). `Message`
+carries optional `images` (base64 JPEG) so the vision agent works across
+providers. Use a **vision-capable** model — the agent reads screenshots.
+
 ## Tear everything down
 Remove every container/network (and optionally volumes/images) created by any
 stack launched from this repo — matched by the compose `working_dir` label, so
