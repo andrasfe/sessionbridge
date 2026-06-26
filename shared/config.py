@@ -43,10 +43,8 @@ class Settings:
     METADATA_LOCAL_DIR = _env("METADATA_LOCAL_DIR", "/data/metadata")
     METADATA_DDB_TABLE = _env("METADATA_DDB_TABLE", "")
 
-    # LLM (optional). Disabled unless a key is present.
-    OPENROUTER_API_KEY = _env("OPENROUTER_API_KEY", "")
-    OPENROUTER_MODEL = _env("OPENROUTER_MODEL", "openai/gpt-4o-mini")
-    LLM_ENABLED = bool(OPENROUTER_API_KEY)
+    # LLM provider selection is handled entirely by services/llm/llm_providers
+    # (LLM_PROVIDER + per-provider keys); nothing LLM-related lives here.
 
     # Browser runner.
     HEADLESS = _env("HEADLESS", "true").lower() == "true"
