@@ -14,6 +14,10 @@
 
   <main class="agent-layout">
     <section class="viewer-wrap">
+      <form id="urlbar" class="urlbar">
+        <input id="url" type="text" placeholder="Type a URL (e.g. expedia.com) and press Enter to navigate" disabled />
+        <button id="go" type="submit" disabled>Go</button>
+      </form>
       <div class="statusline">
         <span id="state" class="pill">starting…</span>
         <span id="host" class="host"></span>

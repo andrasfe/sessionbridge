@@ -264,6 +264,28 @@ async def agent_run(session_id: str, req: AgentRunRequest):
     return AgentRunResult(**result)
 
 
+@app.post("/sessions/{session_id}/navigate")
+async def navigate(session_id: str, url: str, lease_token: str):
+    """User-driven navigation: point the remote browser at a URL."""
+    rec = SESSIONS.get(session_id)
+    if not rec:
+        raise HTTPException(404, "no session")
+    if not _lease_ok(rec, lease_token):
+        raise HTTPException(403, "invalid or expired lease")
+    if not security.url_allowed(url):
+        raise HTTPException(400, "url not on an allowed domain")
+    sess: BrowserSession = rec["session"]
+    try:
+        await sess.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    except Exception as e:  # noqa: BLE001 - navigation may time out; report, don't crash
+        log("runner", "navigate_error", job_id=rec["job_id"], reason=str(e))
+        return {"ok": False, "host": sess.current_host, "message": "navigation did not complete"}
+    # Record it so the agent has context on the next turn.
+    rec["history"].append(f"user navigated to {url} (now: {sess.current_host or ''})")
+    log("runner", "navigated", job_id=rec["job_id"], host=sess.current_host)
+    return {"ok": True, "host": sess.current_host}
+
+
 @app.post("/sessions/{session_id}/destroy")
 async def destroy(session_id: str):
     rec = SESSIONS.pop(session_id, None)

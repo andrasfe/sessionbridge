@@ -31,6 +31,10 @@ button.ghost { background: transparent; border: 1px solid #3a3f4b; color: var(--
 /* agent layout: viewer + chat side by side */
 .agent-layout { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
 .agent-layout .viewer-wrap { flex: 2 1 640px; min-width: 480px; }
+.urlbar { display: flex; gap: 8px; margin-bottom: 8px; }
+.urlbar input { flex: 1; background: #11141a; color: var(--txt); border: 1px solid #2b313c;
+  border-radius: 8px; padding: 9px 11px; font: inherit; font-size: 13.5px; }
+.urlbar button { background: #2a2f3a; }
 .statusline { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 13px; }
 .chat { flex: 1 1 360px; min-width: 320px; display: flex; flex-direction: column;
   height: 70vh; background: var(--panel); border: 1px solid #262a33; border-radius: 10px; }

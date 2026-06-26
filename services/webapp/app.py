@@ -60,6 +60,11 @@ async def agent_turn(job_id: str, body: dict):
     return await _proxy_json("POST", f"/jobs/{job_id}/agent", json=body)
 
 
+@app.post("/api/jobs/{job_id}/navigate")
+async def navigate(job_id: str, body: dict):
+    return await _proxy_json("POST", f"/jobs/{job_id}/navigate", json=body)
+
+
 @app.post("/api/jobs/{job_id}/stop")
 async def stop(job_id: str):
     return await _proxy_json("POST", f"/jobs/{job_id}/stop")

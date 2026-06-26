@@ -135,6 +135,35 @@ async def confirm_login(job_id: str):
     return _status(job)
 
 
+@app.post("/jobs/{job_id}/navigate")
+async def navigate(job_id: str, body: dict):
+    """User-driven navigation to a URL they typed."""
+    try:
+        job = jobstore.get(job_id)
+    except KeyError:
+        raise HTTPException(404, "no job")
+    if not job.session_id:
+        raise HTTPException(409, "session not running")
+    url = (body or {}).get("url", "").strip()
+    if not url:
+        raise HTTPException(422, "empty url")
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url  # be forgiving: "expedia.com" -> "https://expedia.com"
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f"{settings.RUNNER_URL}/sessions/{job.session_id}/navigate",
+                params={"url": url, "lease_token": job.lease.token},
+            )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:  # noqa: BLE001
+        log("controlplane", "navigate_failed", job_id=job_id, reason=str(e))
+        raise HTTPException(502, "navigation failed")
+    job.current_host = data.get("host")
+    return data
+
+
 @app.post("/jobs/{job_id}/agent")
 async def agent_turn(job_id: str, body: dict):
     """Run one agent turn (a chat message) on the job's browser session."""

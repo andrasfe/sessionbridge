@@ -48,9 +48,31 @@ async function init() {
   setState("ready", "");
   $("task").disabled = false;
   $("send").disabled = false;
-  $("task").focus();
-  addMsg("system", "Browser ready. Tell me what to do.");
+  $("url").disabled = false;
+  $("go").disabled = false;
+  $("url").focus();
+  addMsg("system", "Browser ready. Type a URL to navigate, or tell me what to do.");
 }
+
+// URL bar: navigate the remote browser yourself.
+$("urlbar").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = $("url").value.trim();
+  if (!url || !jobId) return;
+  addMsg("system", "navigating to " + url + " …");
+  try {
+    const r = await fetch(`/api/jobs/${jobId}/navigate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await r.json();
+    if (!r.ok) { addMsg("system", "navigation blocked: " + (data.detail || r.status)); return; }
+    setState("ready", data.host || "");
+  } catch (err) {
+    addMsg("system", "navigation failed: " + err);
+  }
+});
 
 $("chatform").addEventListener("submit", async (e) => {
   e.preventDefault();
