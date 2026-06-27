@@ -62,7 +62,6 @@ resource "aws_ecs_task_definition" "controlplane" {
     environment = [
       { name = "RUNNER_URL", value = local.internal_env.RUNNER_URL },
       { name = "LLM_URL", value = local.internal_env.LLM_URL },
-      { name = "ARTIFACT_URL", value = local.internal_env.ARTIFACT_URL },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -103,7 +102,6 @@ resource "aws_ecs_task_definition" "runner" {
     essential = true
     portMappings = [{ containerPort = 8082 }]
     environment = [
-      { name = "ARTIFACT_URL", value = local.internal_env.ARTIFACT_URL },
       { name = "LLM_URL", value = local.internal_env.LLM_URL },
       { name = "HEADLESS", value = "true" },
     ]
@@ -172,52 +170,6 @@ resource "aws_ecs_service" "llm" {
     assign_public_ip = false
   }
   service_registries { registry_arn = aws_service_discovery_service.svc["llm"].arn }
-}
-
-# --- artifacts (private; S3 + DynamoDB) ---
-resource "aws_ecs_task_definition" "artifacts" {
-  family                   = "${local.name}-artifacts"
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = 256
-  memory                   = 512
-  execution_role_arn       = aws_iam_role.execution.arn
-  task_role_arn            = aws_iam_role.artifacts.arn
-  container_definitions = jsonencode([{
-    name      = "artifacts"
-    image     = var.image_artifacts
-    essential = true
-    portMappings = [{ containerPort = 8084 }]
-    environment = [
-      { name = "ARTIFACT_BACKEND", value = "s3" },
-      { name = "METADATA_BACKEND", value = "dynamodb" },
-      { name = "ARTIFACT_S3_BUCKET", value = aws_s3_bucket.artifacts.id },
-      { name = "ARTIFACT_KMS_KEY_ID", value = aws_kms_key.artifacts.arn },
-      { name = "METADATA_DDB_TABLE", value = aws_dynamodb_table.metadata.name },
-    ]
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.svc["artifacts"].name
-        "awslogs-region"        = var.region
-        "awslogs-stream-prefix" = "artifacts"
-      }
-    }
-  }])
-}
-
-resource "aws_ecs_service" "artifacts" {
-  name            = "artifacts"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.artifacts.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-  network_configuration {
-    subnets          = aws_subnet.private[*].id
-    security_groups  = [aws_security_group.internal.id]
-    assign_public_ip = false
-  }
-  service_registries { registry_arn = aws_service_discovery_service.svc["artifacts"].arn }
 }
 
 ###############################################################################

@@ -1,0 +1,91 @@
+@startuml sessionbridge-deployment
+title SessionBridge — AWS Deployment (ECS/Fargate)
+
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam ArrowColor #2f6fed
+
+actor "User" as user
+
+node "User device" as dev {
+  artifact "Web browser\n(viewer canvas + chat UI)" as browser
+}
+
+cloud "Internet" as inet
+
+frame "AWS Region" {
+
+  node "Application Load Balancer\n(public, HTTPS 443)" as alb
+
+  frame "VPC  10.20.0.0/16" as vpc {
+
+    frame "Public subnets (2 AZ)" as pub {
+      node "ECS svc: webapp [Fargate]" as webapp {
+        artifact "FastAPI + static UI\nport 8080 . no Playwright" as awebapp
+      }
+      node "ECS svc: controlplane [Fargate]" as cp {
+        artifact "Orchestrator + WS proxy\nport 8081 . no creds/session" as acp
+      }
+    }
+
+    frame "Private subnets (2 AZ) - no public IP" as priv {
+      node "ECS svc: runner [Fargate]" as runner {
+        artifact "Playwright + Chromium (Xvfb, headed)\nCDP input . screenshot stream\nport 8082" as arunner
+      }
+      node "ECS svc: llm [Fargate]" as llm {
+        artifact "Agent brain (/agent/act)\nport 8083" as allm
+      }
+      node "NAT Gateway\n(outbound only)" as nat
+    }
+  }
+
+  node "Secrets Manager\nOpenRouter API key" as sm
+  node "CloudWatch Logs\n(redacted)" as cw
+}
+
+cloud "OpenRouter\n(vision LLM)" as openrouter
+cloud "Target sites\n(e.g. expedia.com)" as target
+
+' ---- user-facing path (the only hop the browser sees) ----
+user --> browser
+browser --> inet : HTTPS / WSS\n(frames down, input + resize up)
+inet --> alb
+alb --> webapp : HTTP/WS 8080\n[SG: from ALB only]
+
+' ---- strict server-side relay chain ----
+webapp --> cp : HTTP/WS 8081\n[SG: from webapp only]
+cp --> runner : HTTP/WS 8082\n[SG: from control plane ONLY]
+cp --> llm : HTTP 8083
+
+' ---- agent loop + outbound browsing ----
+runner --> llm : screenshot + task\n(/agent/act)
+runner --> nat
+nat --> target : HTTPS (outbound only)
+llm --> openrouter : HTTPS (vision)
+llm ..> sm : read key (startup)
+
+' ---- observability ----
+webapp ..> cw
+cp ..> cw
+runner ..> cw
+llm ..> cw
+
+note right of runner
+  Only component with Playwright +
+  the live browser session. No public
+  inbound; reachable solely by the
+  control plane. Outbound to target
+  sites via NAT (private subnet
+  + NAT = "outbound yes, inbound no").
+end note
+
+note bottom of vpc
+  Isolation: the user-facing side (browser + webapp) and the remote
+  side (runner) are never directly connected. Security groups chain
+  ALB -> webapp -> control plane -> runner; each admits only the
+  previous tier. Local docker-compose mirrors this: webapp on an
+  "edge" network, runner on a "backend" network, only the control
+  plane on both; the runner publishes no ports.
+end note
+
+@enduml

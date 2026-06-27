@@ -18,7 +18,6 @@ variable "image_webapp" { type = string }
 variable "image_controlplane" { type = string }
 variable "image_runner" { type = string }
 variable "image_llm" { type = string }
-variable "image_artifacts" { type = string }
 
 variable "openrouter_api_key" {
   type      = string

@@ -4,9 +4,8 @@
 # Boundary mapping (mirrors docker-compose):
 #   public ALB           -> webapp (only public entry point)
 #   webapp/controlplane  -> public subnets, awsvpc tasks
-#   runner/llm/artifacts -> PRIVATE subnets, no public IP, no inbound from ALB
+#   runner/llm           -> PRIVATE subnets, no public IP, no inbound from ALB
 #   runner SG            -> ingress ONLY from the control-plane SG
-#   artifacts            -> S3 (SSE-KMS) + DynamoDB
 #   OpenRouter key       -> Secrets Manager
 #   logs                 -> CloudWatch (app already redacts before writing)
 #
@@ -73,7 +72,7 @@ resource "aws_eip" "nat" {
 }
 
 # Single NAT gateway so private tasks (runner) can reach the internet OUTBOUND
-# (e.g. load T-Mobile) while remaining unreachable INBOUND.
+# (to load target sites) while remaining unreachable INBOUND.
 resource "aws_nat_gateway" "nat" {
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public[0].id
@@ -185,17 +184,17 @@ resource "aws_security_group" "runner" {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"] # outbound to T-Mobile via NAT
+    cidr_blocks = ["0.0.0.0/0"] # outbound to target sites via NAT
   }
 }
 
-# LLM + artifacts: reachable only by the control plane and the runner.
+# LLM: reachable only by the control plane and the runner.
 resource "aws_security_group" "internal" {
   name_prefix = "${local.name}-internal-"
   vpc_id      = aws_vpc.main.id
   ingress {
     from_port       = 8083
-    to_port         = 8084
+    to_port         = 8083
     protocol        = "tcp"
     security_groups = [aws_security_group.controlplane.id, aws_security_group.runner.id]
   }
@@ -216,7 +215,7 @@ resource "aws_service_discovery_private_dns_namespace" "ns" {
 }
 
 resource "aws_service_discovery_service" "svc" {
-  for_each = toset(["controlplane", "runner", "llm", "artifacts"])
+  for_each = toset(["controlplane", "runner", "llm"])
   name     = each.key
   dns_config {
     namespace_id = aws_service_discovery_private_dns_namespace.ns.id
@@ -230,46 +229,8 @@ resource "aws_service_discovery_service" "svc" {
 }
 
 # ---------------------------------------------------------------------------
-# Storage + secrets
+# Secrets
 # ---------------------------------------------------------------------------
-resource "aws_kms_key" "artifacts" {
-  description             = "${local.name} artifact encryption"
-  deletion_window_in_days = 7
-}
-
-resource "aws_s3_bucket" "artifacts" {
-  bucket_prefix = "${local.name}-artifacts-"
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_public_access_block" "artifacts" {
-  bucket                  = aws_s3_bucket.artifacts.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
-  bucket = aws_s3_bucket.artifacts.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.artifacts.arn
-    }
-  }
-}
-
-resource "aws_dynamodb_table" "metadata" {
-  name         = "${local.name}-artifact-metadata"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "artifact_id"
-  attribute {
-    name = "artifact_id"
-    type = "S"
-  }
-}
-
 resource "aws_secretsmanager_secret" "openrouter" {
   name_prefix = "${local.name}/openrouter-"
 }
@@ -302,36 +263,6 @@ resource "aws_iam_role_policy_attachment" "execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Task role for the artifacts service (S3 + DynamoDB + KMS).
-resource "aws_iam_role" "artifacts" {
-  name_prefix        = "${local.name}-artifacts-"
-  assume_role_policy = data.aws_iam_policy_document.assume.json
-}
-
-resource "aws_iam_role_policy" "artifacts" {
-  role = aws_iam_role.artifacts.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["s3:PutObject", "s3:GetObject"]
-        Resource = "${aws_s3_bucket.artifacts.arn}/*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["dynamodb:PutItem", "dynamodb:GetItem"]
-        Resource = aws_dynamodb_table.metadata.arn
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["kms:GenerateDataKey", "kms:Decrypt"]
-        Resource = aws_kms_key.artifacts.arn
-      },
-    ]
-  })
-}
-
 # ---------------------------------------------------------------------------
 # ECS cluster + logging
 # ---------------------------------------------------------------------------
@@ -340,7 +271,7 @@ resource "aws_ecs_cluster" "main" {
 }
 
 resource "aws_cloudwatch_log_group" "svc" {
-  for_each          = toset(["webapp", "controlplane", "runner", "llm", "artifacts"])
+  for_each          = toset(["webapp", "controlplane", "runner", "llm"])
   name              = "/ecs/${local.name}/${each.key}"
   retention_in_days = 14
 }
@@ -353,7 +284,6 @@ locals {
     CONTROL_PLANE_URL = "http://controlplane.${local.name}.local:8081"
     RUNNER_URL        = "http://runner.${local.name}.local:8082"
     LLM_URL           = "http://llm.${local.name}.local:8083"
-    ARTIFACT_URL      = "http://artifacts.${local.name}.local:8084"
   }
 }
 # Task definitions and services live in ecs.tf.
