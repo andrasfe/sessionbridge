@@ -49,6 +49,10 @@ class AgentDecideRequest(BaseModel):
     url: str = ""
     history: list[str] = Field(default_factory=list)
     screenshot_b64: str = ""  # JPEG, base64
+    # Live viewport size (the screenshot is exactly this many pixels); coordinates
+    # the model returns are in this space. Dynamic 1:1 with the viewer.
+    width: int = 1280
+    height: int = 800
 
 
 class AgentAction(BaseModel):

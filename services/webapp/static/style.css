@@ -22,7 +22,10 @@ button.ghost { background: transparent; border: 1px solid #3a3f4b; color: var(--
 .viewer-wrap { position: relative; }
 .notice { background: #2a2410; border: 1px solid #6a5a1f; color: #f0d98a;
   padding: 10px 14px; border-radius: 8px 8px 0 0; font-size: 13px; }
-#viewer { width: 100%; max-width: 1280px; aspect-ratio: 1280 / 800; background: #000;
+/* The viewer fills a stable, layout-driven box (column width x 70vh). The remote
+   viewport is resized to match this box exactly, so the stream is 1:1. The box
+   size comes from CSS (not the canvas bitmap), so measuring it can't feed back. */
+#viewer { width: 100%; height: 70vh; background: #000;
   border: 1px solid #262a33; border-radius: 0 0 8px 8px; display: block; outline: none; cursor: crosshair; }
 
 .result { margin-top: 20px; background: var(--panel); padding: 18px; border-radius: 10px; }

@@ -35,13 +35,13 @@ except Exception as e:  # noqa: BLE001 - missing key / unknown provider
 
 
 AGENT_SYSTEM = """You are a web-browsing agent controlling a Chromium browser at \
-1280x800 pixels. You are given the user's task, the recent action history, and a \
+__W__x__H__ pixels. You are given the user's task, the recent action history, and a \
 screenshot of the current page. Decide the SINGLE next action.
 
 Respond with ONLY a JSON object (no prose, no markdown), with a short "thought" \
 and one "action". Valid actions:
 - {"thought":"...","action":"navigate","url":"https://..."}
-- {"thought":"...","action":"click","x":<0-1280>,"y":<0-800>}   // pixel coords on the screenshot
+- {"thought":"...","action":"click","x":<0-__W__>,"y":<0-__H__>}   // pixel coords on the screenshot
 - {"thought":"...","action":"type","text":"..."}                // types into the currently focused field
 - {"thought":"...","action":"key","key":"Enter"}                // Enter, Tab, Backspace, ArrowDown, ...
 - {"thought":"...","action":"scroll","dy":<pixels: + down, - up>}
@@ -88,8 +88,11 @@ async def agent_act(req: AgentDecideRequest):
         f"TASK:\n{req.task}\n\nCURRENT URL: {req.url or 'about:blank'}\n\n"
         f"RECENT ACTIONS:\n{history}\n\nDecide the next action."
     )
+    # The viewport (and so the screenshot) is dynamic; tell the model its exact
+    # pixel space so returned click coordinates land 1:1.
+    system = AGENT_SYSTEM.replace("__W__", str(req.width)).replace("__H__", str(req.height))
     messages = [
-        Message(role="system", content=AGENT_SYSTEM),
+        Message(role="system", content=system),
         Message(
             role="user",
             content=user_text,

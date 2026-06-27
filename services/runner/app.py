@@ -76,7 +76,16 @@ async def ws_stream(ws: WebSocket, session_id: str):
     async def pump_input():
         while True:
             msg = await ws.receive_json()
-            if msg.get("type") != "input":
+            mtype = msg.get("type")
+            # Dynamic 1:1 sizing: the viewer reports its on-screen pixel size and
+            # the remote viewport tracks it. Always honoured (not input-gated).
+            if mtype == "resize":
+                try:
+                    await sess.set_view_size(int(msg.get("w", 0)), int(msg.get("h", 0)))
+                except Exception as e:  # noqa: BLE001
+                    log("runner", "resize_error", reason=str(e))
+                continue
+            if mtype != "input":
                 continue
             # Input is forwarded but NEVER logged (no input logging, per spec).
             if rec["input_enabled"]:

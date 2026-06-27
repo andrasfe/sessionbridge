@@ -42,7 +42,10 @@ async def run_agent(sess: BrowserSession, task: str, history: list[str],
                 resp = await client.post(
                     f"{settings.LLM_URL}/agent/act",
                     json={"task": task, "url": url, "history": history,
-                          "screenshot_b64": shot},
+                          "screenshot_b64": shot,
+                          # The viewport is dynamic (1:1 with the viewer), so the
+                          # model must be told the actual pixel space it clicks in.
+                          "width": sess.view_w, "height": sess.view_h},
                 )
             resp.raise_for_status()
             act = resp.json()
