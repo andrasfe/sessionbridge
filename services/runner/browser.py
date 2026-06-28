@@ -23,6 +23,8 @@ from playwright.async_api import async_playwright
 from shared.config import settings
 from shared.logging import log
 
+import adapters
+
 # Bounds for the dynamic viewport. deviceScaleFactor is fixed at 1 (context
 # creation), so logical px == device px == streamed px == input px — a single
 # coordinate space, which is what keeps click/type mapping exactly 1:1.
@@ -103,6 +105,11 @@ class BrowserSession:
               : _q(p);
         """)
         self.page = await self._context.new_page()
+        # API plane: intercept top-level navigations to adapter-backed domains
+        # (bot-walled DOM but an official API) and serve a clean page rendered
+        # from the API instead. Re-entrant: links in the rendered page are real
+        # URLs, so clicking them is intercepted and rendered too.
+        await self._context.route(adapters.ROUTE_PATTERN, self._adapter_route)
         # CDP session is used only for input dispatch (mouse/keyboard/paste).
         self._cdp = await self._context.new_cdp_session(self.page)
         # Don't fail session start if the login page is slow/unreachable — the
@@ -147,6 +154,33 @@ class BrowserSession:
             except asyncio.QueueFull:
                 pass
             await asyncio.sleep(interval)
+
+    # ---- API plane -------------------------------------------------------
+    async def _adapter_route(self, route) -> None:
+        """Serve adapter-backed (bot-walled) domains from their official API.
+
+        Only top-level document navigations are rendered; sub-resources and any
+        adapter that declines (e.g. Reddit without OAuth creds) fall through to
+        the real network, so non-adapter browsing is untouched.
+        """
+        req = route.request
+        if req.resource_type != "document":
+            await route.continue_()
+            return
+        render = adapters.pick(req.url)
+        if render is None:
+            await route.continue_()
+            return
+        try:
+            html = await render(req.url)
+        except Exception as e:  # noqa: BLE001 - never break navigation on a render error
+            log("runner", "adapter_error", url=req.url, reason=str(e))
+            html = None
+        if html:
+            log("runner", "api_rendered", url=req.url)
+            await route.fulfill(status=200, content_type="text/html; charset=utf-8", body=html)
+        else:
+            await route.continue_()
 
     # ---- dynamic viewport ------------------------------------------------
     async def set_view_size(self, w: int, h: int) -> None:

@@ -36,6 +36,10 @@ services:
       # Headed (under Xvfb) by default — real browsers fare better against bot
       # walls. Set RUNNER_HEADLESS=true for a lighter headless runner.
       HEADLESS: "${RUNNER_HEADLESS:-false}"
+      # Optional: a registered Reddit app (script/web) enables the Reddit
+      # API-render adapter for the bot-walled Reddit DOM. Unset -> adapter off.
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
     # No `ports:` — unreachable from host and from the edge network.
     networks: [backend]
     shm_size: "1gb"
