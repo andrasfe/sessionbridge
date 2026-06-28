@@ -12,30 +12,19 @@ const canvas = $("viewer");
 const ctx = canvas.getContext("2d");
 const img = new Image();
 
-// ---------------------------------------------------------- dynamic 1:1 sizing
-// The remote viewport must equal the viewer's on-screen pixel box so the stream
-// fills the canvas 1:1 and every click/keystroke maps to the exact same pixel.
-// We measure the canvas's CSS box and tell the runner; it resizes Chromium to
-// match. The canvas BITMAP is then driven by the frames (frame.w x frame.h) and
-// input is always mapped into that same bitmap space — so a resize can never
-// de-sync the coordinates.
-let lastSentSize = "";
-function measureView() {
-  const r = canvas.getBoundingClientRect();
-  return { w: Math.max(1, Math.round(r.width)), h: Math.max(1, Math.round(r.height)) };
+// ------------------------------------------------------- fixed-size 1:1 viewer
+// The remote browser renders at a fixed desktop size (a real "whole browser",
+// not shrunk to the panel). The canvas is shown at its natural pixel size inside
+// a scrollable wrapper, so when the panel is smaller you get scrollbars to pan.
+// Because the canvas is never CSS-scaled, 1 frame px == 1 canvas px == 1 input px
+// — input stays exactly 1:1, and getBoundingClientRect keeps it correct while
+// the wrapper is scrolled.
+const VIEW_W = 1280, VIEW_H = 800;
+function sendViewSize() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "resize", w: VIEW_W, h: VIEW_H }));
+  }
 }
-function sendResize() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const { w, h } = measureView();
-  const key = w + "x" + h;
-  if (key === lastSentSize) return;       // only on real change
-  lastSentSize = key;
-  ws.send(JSON.stringify({ type: "resize", w, h }));
-}
-let resizeTimer = null;
-function scheduleResize() { clearTimeout(resizeTimer); resizeTimer = setTimeout(sendResize, 200); }
-new ResizeObserver(scheduleResize).observe(canvas);   // any layout change
-window.addEventListener("resize", scheduleResize);    // window resize / zoom
 
 // ---------------------------------------------------------------- chat log
 function addMsg(role, text) {
@@ -160,9 +149,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function openStream() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/${jobId}`);
-  // As soon as the socket is open, report our size so the remote viewport
-  // matches before (or right after) the first frame.
-  ws.onopen = () => { lastSentSize = ""; sendResize(); };
+  // Pin the remote viewport to the fixed desktop size as soon as we connect.
+  ws.onopen = () => { sendViewSize(); };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === "frame") {

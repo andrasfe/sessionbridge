@@ -16,7 +16,12 @@ PORT="${PORT:-8082}"
 
 if [ "${HEADLESS}" = "false" ]; then
   echo "runner: starting headed browser under Xvfb"
-  Xvfb :99 -screen 0 "${VIEWPORT_W:-1280}x${VIEWPORT_H:-800}x24" -nolisten tcp &
+  # The display must be LARGER than any viewport the viewer will request: a headed
+  # browser window (and so its viewport) can't grow past the virtual screen. The
+  # dynamic 1:1 viewport tracks the user's panel (height 70vh), which easily
+  # exceeds 800px on normal monitors — so size the display generously (default 4K)
+  # and let the runner's own clamp (2560x1600) be the real bound.
+  Xvfb :99 -screen 0 "${XVFB_W:-3840}x${XVFB_H:-2160}x24" -nolisten tcp &
   export DISPLAY=:99
   # Wait (briefly) for the X socket to appear before launching the API.
   i=0

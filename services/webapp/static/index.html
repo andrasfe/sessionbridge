@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SessionBridge — agent browser</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=2" />
 </head>
 <body>
   <header>
@@ -22,7 +22,9 @@
         <span id="state" class="pill">starting…</span>
         <span id="host" class="host"></span>
       </div>
-      <canvas id="viewer" width="1280" height="800" tabindex="0"></canvas>
+      <div class="viewer-scroll">
+        <canvas id="viewer" width="1280" height="800" tabindex="0"></canvas>
+      </div>
     </section>
 
     <section class="chat">
@@ -35,6 +37,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2"></script>
 </body>
 </html>
