@@ -22,6 +22,13 @@ services:
         INSTALL_OPENHANDS: "1"
     environment:
       AGENT_HARNESS: openhands
-      OPENHANDS_MODEL: ${OPENHANDS_MODEL:-openrouter/z-ai/glm-5.2}
-      # The harness calls OpenRouter from inside the runner container.
+      # Provider of choice (default OpenRouter + glm-5.2). Set LLM_PROVIDER to
+      # openai/anthropic with the matching key, or pin any litellm model string
+      # via OPENHANDS_MODEL. Keys are read from inside the runner container.
+      LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+      OPENHANDS_MODEL: ${OPENHANDS_MODEL:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}

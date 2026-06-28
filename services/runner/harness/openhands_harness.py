@@ -45,11 +45,33 @@ from openhands.sdk.tool import (
     register_tool,
 )
 
-DEFAULT_MODEL = os.getenv("OPENHANDS_MODEL", "openrouter/z-ai/glm-5.2")
 # Cap output tokens per call. Without this litellm requests the model maximum
 # (65536 for glm-5.2), which OpenRouter rejects with a 402 unless the account
 # can afford that ceiling. A few-thousand-token cap is ample for tool-calling.
 MAX_OUTPUT_TOKENS = int(os.getenv("OPENHANDS_MAX_OUTPUT_TOKENS", "4096"))
+
+# Provider selection follows the same convention as the rest of the system
+# (LLM_PROVIDER + per-provider key/model), defaulting to OpenRouter + glm-5.2.
+# OpenHands' LLM is litellm-backed, so each provider maps to a litellm model
+# string; OPENHANDS_MODEL overrides the model string for any provider.
+_PROVIDER_DEFAULTS = {
+    "openrouter": (lambda: f"openrouter/{os.getenv('OPENROUTER_MODEL') or 'z-ai/glm-5.2'}", "OPENROUTER_API_KEY"),
+    "openai":     (lambda: f"openai/{os.getenv('OPENAI_MODEL') or 'gpt-4o'}", "OPENAI_API_KEY"),
+    "anthropic":  (lambda: f"anthropic/{os.getenv('ANTHROPIC_MODEL') or 'claude-sonnet-4-6'}", "ANTHROPIC_API_KEY"),
+}
+
+
+def _resolve_llm() -> tuple[str, str] | None:
+    """Pick (litellm_model, api_key) from the configured provider.
+
+    Returns None when the selected provider has no API key set, so the harness
+    can hand control back instead of failing mid-run.
+    """
+    provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+    model_fn, key_env = _PROVIDER_DEFAULTS.get(provider, _PROVIDER_DEFAULTS["openrouter"])
+    model = os.getenv("OPENHANDS_MODEL") or model_fn()  # explicit override wins
+    api_key = os.environ.get(key_env, "")
+    return (model, api_key) if api_key else None
 
 # Carries (BrowserSession, event_loop) into the (threaded, sync) tool executor.
 # asyncio.to_thread copies the calling task's context, so a value set in run()
@@ -196,10 +218,12 @@ class OpenHandsHarness:
         return "openhands"
 
     async def run(self, session: Any, task: str, history: list[str], max_steps: int) -> dict:
-        api_key = os.environ.get("OPENROUTER_API_KEY", "")
-        if not api_key:
+        resolved = _resolve_llm()
+        if resolved is None:
+            provider = os.getenv("LLM_PROVIDER", "openrouter")
             return {"state": JobState.REQUIRES_USER_INTERVENTION, "answer": "",
-                    "steps": [], "message": "No OPENROUTER_API_KEY for the OpenHands harness."}
+                    "steps": [], "message": f"No API key for LLM provider '{provider}' (OpenHands harness)."}
+        model, api_key = resolved
 
         _ensure_registered()
         loop = asyncio.get_running_loop()
@@ -228,13 +252,13 @@ class OpenHandsHarness:
             elif kind == "FinishAction":
                 answer_holder.append(getattr(action, "message", "") or "")
 
-        llm = LLM(model=DEFAULT_MODEL, api_key=api_key, service_id="sessionbridge-agent",
+        llm = LLM(model=model, api_key=api_key, service_id="sessionbridge-agent",
                   max_output_tokens=MAX_OUTPUT_TOKENS)
         agent = Agent(llm=llm, tools=[Tool(name="browser")], system_prompt=SYSTEM_PROMPT)
         conv = Conversation(agent, workspace=tempfile.mkdtemp(prefix="oh-"), callbacks=[cb])
         conv_box.append(conv)
 
-        log("runner", "openhands_start", job_id=getattr(session, "job_id", "?"), model=DEFAULT_MODEL)
+        log("runner", "openhands_start", job_id=getattr(session, "job_id", "?"), model=model)
         try:
             conv.send_message(task)
             await asyncio.to_thread(conv.run)
